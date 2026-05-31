@@ -551,9 +551,13 @@ static int sc910gs_init_controls(struct sc910gs *sc910gs)
 
     sc910gs->vflip = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
                       V4L2_CID_VFLIP, 0, 1, 1, 0);
+    if (sc910gs->vflip)
+        sc910gs->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 
     sc910gs->hflip = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
                       V4L2_CID_HFLIP, 0, 1, 1, 0);
+    if (sc910gs->hflip)
+        sc910gs->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 
     sc910gs->blacklevel = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
                            V4L2_CID_BRIGHTNESS, 0, 0x1000-1, 1,
