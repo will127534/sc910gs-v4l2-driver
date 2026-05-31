@@ -35,13 +35,14 @@
 #define SC910GS_XCLR_ASSERTED            1
 #define SC910GS_XCLR_DEASSERTED          0
 
-/* Exposure control (2-line units). */
+/* V4L2 exposure is in line units; the SC910GS register uses 2-line units. */
 #define SC910GS_REG_EXPOSURE             CCI_REG24(0x3e00)
 #define SC910GS_EXPOSURE_MIN             0
 #define SC910GS_EXPOSURE_STEP            2
 #define SC910GS_EXPOSURE_DEFAULT         500
-#define SC910GS_EXPOSURE_MARGIN          4
-#define SC910GS_EXPOSURE_MAX(vmax)       ((vmax) / 2 - SC910GS_EXPOSURE_MARGIN)
+#define SC910GS_EXPOSURE_MARGIN          8
+#define SC910GS_EXPOSURE_MAX(vmax)       ((vmax) - SC910GS_EXPOSURE_MARGIN)
+#define SC910GS_EXPOSURE_TO_REG(exposure) ((exposure) / 2)
 
 
 #define SC910GS_REG_VMAX           CCI_REG16(0x320e) //Technicall not called VMAX but I'm used to that naming
@@ -429,15 +430,11 @@ static int sc910gs_set_ctrl(struct v4l2_ctrl *ctrl)
                       fmt->width, fmt->height);
 
     if (ctrl->id == V4L2_CID_VBLANK && sc910gs->exposure) {
-        u32 current_exposure = sc910gs->exposure->cur.val;
-
         vmax = ctrl->val + mode->height;
         exposure_max = SC910GS_EXPOSURE_MAX(vmax);
-        current_exposure = clamp_t(u32, current_exposure,
-                       SC910GS_EXPOSURE_MIN, exposure_max);
         __v4l2_ctrl_modify_range(sc910gs->exposure,
                      SC910GS_EXPOSURE_MIN, exposure_max,
-                     SC910GS_EXPOSURE_STEP, current_exposure);
+                     SC910GS_EXPOSURE_STEP, SC910GS_EXPOSURE_DEFAULT);
     }
 
     if (ctrl->id == V4L2_CID_VFLIP || ctrl->id == V4L2_CID_HFLIP)
@@ -451,7 +448,8 @@ static int sc910gs_set_ctrl(struct v4l2_ctrl *ctrl)
     switch (ctrl->id) {
     case V4L2_CID_EXPOSURE: {
         dev_dbg(sc910gs->dev, "EXPOSURE=%u\n", ctrl->val);
-        ret = cci_write(sc910gs->regmap, SC910GS_REG_EXPOSURE, (u32)ctrl->val << 4, NULL);
+        ret = cci_write(sc910gs->regmap, SC910GS_REG_EXPOSURE,
+                SC910GS_EXPOSURE_TO_REG((u32)ctrl->val) << 4, NULL);
         break;
     }
     case V4L2_CID_ANALOGUE_GAIN: {
