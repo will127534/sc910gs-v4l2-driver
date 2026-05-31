@@ -55,8 +55,8 @@
 				clocks = <&cam1_clk>;
 				clock-names = "xclk";
 
-				vana-supply = <&cam1_reg>;	/* 3.3v */
-				vdig-supply = <&cam_dummy_reg>;	/* 1.1v */
+				vana-supply = <&cam1_reg>;	/* module analog rail, sensor nominal 2.8v */
+				vdig-supply = <&cam_dummy_reg>;	/* sensor nominal 1.5v */
 				vddl-supply = <&cam_dummy_reg>;	/* 1.8v */
 
 				rotation = <0>;
@@ -69,7 +69,7 @@
 						clock-noncontinuous;
 						remote-endpoint = <&csi_ep>;
 						link-frequencies =
-							/bits/ 64 <600000000>;
+							/bits/ 64 <495000000>;
 					};
 				};
 
