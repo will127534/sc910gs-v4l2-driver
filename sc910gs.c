@@ -47,8 +47,9 @@
 
 #define SC910GS_REG_VMAX           CCI_REG16(0x320e) //Technically not called VMAX but I'm used to that naming
 #define SC910GS_VMAX_12BIT         2500
-/* The 2168-line theoretical RAW10 limit drops frames on this link row. */
+/* The 2168-line theoretical RAW8/RAW10 limit drops frames on this link row. */
 #define SC910GS_VMAX_10BIT         2273
+#define SC910GS_VMAX_8BIT          2273
 
 
 #define SC910GS_REG_ID             CCI_REG16(0x3107)
@@ -97,6 +98,7 @@ static const s64 sc910gs_link_freq_menu[] = {
 static const u32 sc910gs_mbus_codes[] = {
     MEDIA_BUS_FMT_SBGGR12_1X12,
     MEDIA_BUS_FMT_SBGGR10_1X10,
+    MEDIA_BUS_FMT_SBGGR8_1X8,
 };
 
 
@@ -268,6 +270,11 @@ static const struct cci_reg_sequence mode_3840x2160_10bit_regs[] = {
     {SC910GS_REG_VMAX, SC910GS_VMAX_10BIT},
 };
 
+static const struct cci_reg_sequence mode_3840x2160_8bit_regs[] = {
+    {CCI_REG8(0x3031), 0x08},
+    {SC910GS_REG_VMAX, SC910GS_VMAX_8BIT},
+};
+
 
 /* Mode description */
 struct sc910gs_mode {
@@ -322,6 +329,25 @@ static const struct sc910gs_mode supported_modes[] = {
         .reg_list = {
             .num_of_regs = ARRAY_SIZE(mode_3840x2160_10bit_regs),
             .regs = mode_3840x2160_10bit_regs,
+        },
+    },
+    {
+        .code = MEDIA_BUS_FMT_SBGGR8_1X8,
+        .width = SC910GS_MODE_WIDTH,
+        .height = SC910GS_MODE_HEIGHT,
+        .vmax_def = SC910GS_VMAX_8BIT,
+        .vblank_min = SC910GS_VMAX_8BIT - SC910GS_MODE_HEIGHT,
+        .pixel_rate = SC910GS_PIXEL_RATE,
+        .link_freq_index = 0,
+        .crop = {
+            .left = SC910GS_MODE_CROP_LEFT,
+            .top = SC910GS_MODE_CROP_TOP,
+            .width = SC910GS_MODE_WIDTH,
+            .height = SC910GS_MODE_HEIGHT,
+        },
+        .reg_list = {
+            .num_of_regs = ARRAY_SIZE(mode_3840x2160_8bit_regs),
+            .regs = mode_3840x2160_8bit_regs,
         },
     },
 };
