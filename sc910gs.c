@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * A V4L2 driver for SmartSense SC910GS camera.
- *
+ * A V4L2 driver for SmartSens SC910GS camera.
  */
 
 #include <linux/clk.h>
@@ -44,13 +43,12 @@
 #define SC910GS_EXPOSURE_MAX(vmax)       ((vmax) - SC910GS_EXPOSURE_MARGIN)
 #define SC910GS_EXPOSURE_TO_REG(exposure) ((exposure) / 2)
 
-
-#define SC910GS_REG_VMAX           CCI_REG16(0x320e) //Technically not called VMAX but I'm used to that naming
+/* Frame length register, exposed as VMAX in the V4L2 timing model. */
+#define SC910GS_REG_VMAX           CCI_REG16(0x320e)
 #define SC910GS_VMAX_12BIT         2500
 /* The 2168-line theoretical RAW8/RAW10 limit drops frames on this link row. */
 #define SC910GS_VMAX_10BIT         2273
 #define SC910GS_VMAX_8BIT          2273
-
 
 #define SC910GS_REG_ID             CCI_REG16(0x3107)
 #define SC910GS_ID                 0xa22b
@@ -79,7 +77,7 @@
 #define SC910GS_TEST_PATTERN_DISABLED    0xb4
 #define SC910GS_TEST_PATTERN_INCREMENTAL 0xbc
 
-/* Vertical and Horizontal Flip */
+/* Vertical and horizontal flip */
 #define SC910GS_REG_FLIP            CCI_REG8(0x3221)
 #define SC910GS_HFLIP_MASK          GENMASK(2, 1)
 #define SC910GS_VFLIP_MASK          GENMASK(7, 5)
@@ -88,21 +86,19 @@
 #define SC910GS_PIXEL_RATE              288000000U
 #define SC910GS_LINK_FREQ               495000000U
 
-#define SC910GS_XCLK_MIN                10000000U
-#define SC910GS_XCLK_MAX                60000000U
+#define SC910GS_XCLK_FREQ               27000000U
 
 static const s64 sc910gs_link_freq_menu[] = {
-    SC910GS_LINK_FREQ,
+	SC910GS_LINK_FREQ,
 };
 
 static const u32 sc910gs_mbus_codes[] = {
-    MEDIA_BUS_FMT_SBGGR12_1X12,
-    MEDIA_BUS_FMT_SBGGR10_1X10,
-    MEDIA_BUS_FMT_SBGGR8_1X8,
+	MEDIA_BUS_FMT_SBGGR12_1X12,
+	MEDIA_BUS_FMT_SBGGR10_1X10,
+	MEDIA_BUS_FMT_SBGGR8_1X8,
 };
 
-
-/* Full pixel array is 3856x2368; the programmed mode outputs a centered 4K crop. */
+/* Full pixel array is 3856x2368; the programmed mode outputs a centered crop. */
 #define SC910GS_NATIVE_WIDTH       3856U
 #define SC910GS_NATIVE_HEIGHT      2368U
 #define SC910GS_PIXEL_ARRAY_LEFT      0U
@@ -114,254 +110,252 @@ static const u32 sc910gs_mbus_codes[] = {
 #define SC910GS_MODE_CROP_LEFT        8U
 #define SC910GS_MODE_CROP_TOP       104U
 
-
 static const struct cci_reg_sequence mode_common_regs[] = {
-	{CCI_REG8(0x36e9),0x80},
-	{CCI_REG8(0x37f9),0x80},
-	{CCI_REG8(0x36ea),0x0b},
-	{CCI_REG8(0x36eb),0x0b},
-	{CCI_REG8(0x36ec),0x03},
-	{CCI_REG8(0x36ed),0x21},
-	{CCI_REG8(0x37fa),0x0a},
-	{CCI_REG8(0x37fb),0x32},
-	{CCI_REG8(0x37fc),0x10},
-	{CCI_REG8(0x37fd),0x34},
-	{CCI_REG8(0x36e9),0x44},
-	{CCI_REG8(0x37f9),0x40},
-	{CCI_REG8(0x3018),0x72}, //4lanemode
-	{CCI_REG8(0x3019),0xf0},
-	{CCI_REG8(0x301f),0x8f},
-	{CCI_REG8(0x3031),0x0c}, //raw12mode
-	{CCI_REG8(0x3033),0xa2},
-	
-	{CCI_REG8(0x3106),0x01},
-	{CCI_REG8(0x3200),0x00},
-	{CCI_REG8(0x3201),0x00},
-	{CCI_REG8(0x3202),0x00},
-	{CCI_REG8(0x3203),0x64},
-	{CCI_REG8(0x3204),0x0f},
-	{CCI_REG8(0x3205),0x0f},
-	{CCI_REG8(0x3206),0x08},
-	{CCI_REG8(0x3207),0xdb},
-	{CCI_REG8(0x3208),0x0f},
-	{CCI_REG8(0x3209),0x00}, //width=3840 
-	{CCI_REG8(0x320a),0x08},
-	{CCI_REG8(0x320b),0x70}, //height=2160
-	{CCI_REG8(0x320c),0x02},
-	{CCI_REG8(0x320d),0x58}, //HMAX
-	{CCI_REG8(0x320e),0x09},
-	{CCI_REG8(0x320f),0xc4}, //VMAX
-	{CCI_REG8(0x3210),0x00},
-	{CCI_REG8(0x3211),0x08},
-	{CCI_REG8(0x3212),0x00},
-    {CCI_REG8(0x3213),0x04},
-	{CCI_REG8(0x3271),0x1b},
-	{CCI_REG8(0x3273),0x1f},
-	{CCI_REG8(0x3275),0x1b},
-	{CCI_REG8(0x3277),0x1f},
-	{CCI_REG8(0x3306),0x88},
-	{CCI_REG8(0x3308),0x10},
-	{CCI_REG8(0x330a),0x01},
-	{CCI_REG8(0x330b),0x10},
-	{CCI_REG8(0x3314),0xf0},
-	{CCI_REG8(0x3315),0x20},
-	{CCI_REG8(0x3317),0xb0},
-	{CCI_REG8(0x331f),0x02},
-	{CCI_REG8(0x3320),0xc1},
-	{CCI_REG8(0x3323),0x02},
-	{CCI_REG8(0x3328),0xfb},
-	{CCI_REG8(0x3364),0x0a},
-	{CCI_REG8(0x3366),0x04},
-	{CCI_REG8(0x3385),0x25},
-	{CCI_REG8(0x3387),0x6d},
-	{CCI_REG8(0x33ef),0x05},
-	{CCI_REG8(0x33f8),0x02},
-	{CCI_REG8(0x33fa),0x00},
-	{CCI_REG8(0x3410),0xb0},
-    
-    {CCI_REG8(0x34f0),0x00}, //LED Strobe - all on
+	{ CCI_REG8(0x36e9), 0x80 },
+	{ CCI_REG8(0x37f9), 0x80 },
+	{ CCI_REG8(0x36ea), 0x0b },
+	{ CCI_REG8(0x36eb), 0x0b },
+	{ CCI_REG8(0x36ec), 0x03 },
+	{ CCI_REG8(0x36ed), 0x21 },
+	{ CCI_REG8(0x37fa), 0x0a },
+	{ CCI_REG8(0x37fb), 0x32 },
+	{ CCI_REG8(0x37fc), 0x10 },
+	{ CCI_REG8(0x37fd), 0x34 },
+	{ CCI_REG8(0x36e9), 0x44 },
+	{ CCI_REG8(0x37f9), 0x40 },
+	{ CCI_REG8(0x3018), 0x72 },	/* 4-lane MIPI */
+	{ CCI_REG8(0x3019), 0xf0 },
+	{ CCI_REG8(0x301f), 0x8f },
+	{ CCI_REG8(0x3031), 0x0c },	/* RAW12 */
+	{ CCI_REG8(0x3033), 0xa2 },
 
-    {CCI_REG8(0x34f2),0x0f},
-	{CCI_REG8(0x3630),0xa4},
-	{CCI_REG8(0x3637),0x0f},
-	{CCI_REG8(0x363b),0x08},
-	{CCI_REG8(0x363c),0x07},
-	{CCI_REG8(0x363d),0x07},
-	{CCI_REG8(0x363e),0x67},
-	{CCI_REG8(0x363f),0x07},
-	{CCI_REG8(0x3648),0x99},
-	{CCI_REG8(0x364e),0x02},
-	{CCI_REG8(0x3654),0x00},
-	{CCI_REG8(0x365c),0x00},
-	{CCI_REG8(0x3727),0x07},
-	{CCI_REG8(0x372d),0x00},
-	{CCI_REG8(0x3731),0x00},
-	{CCI_REG8(0x3732),0x00},
-	{CCI_REG8(0x3733),0x08},
-	{CCI_REG8(0x3904),0x18},
-	{CCI_REG8(0x3905),0x2c},
-    {CCI_REG8(0x3907),0x00}, // Blacklevel {16’h3907[4:0],16’h3908}
-    {CCI_REG8(0x3908),0x00}, // Blacklevel
-	{CCI_REG8(0x391d),0x04},
-	{CCI_REG8(0x391f),0x19},
-	{CCI_REG8(0x3926),0x21},
-	{CCI_REG8(0x3927),0x01},
-	{CCI_REG8(0x3950),0x18},
-	{CCI_REG8(0x3e01),0x4d},
-	{CCI_REG8(0x3e02),0xe0},
-	{CCI_REG8(0x3e03),0x0b},
-	{CCI_REG8(0x3e06),0x00},
-	{CCI_REG8(0x3e08),0x03},
-	{CCI_REG8(0x3e09),0x40},
-	{CCI_REG8(0x4350),0x00},
-	{CCI_REG8(0x4351),0x00},
-	{CCI_REG8(0x4353),0x37},
-	{CCI_REG8(0x4356),0x12},
-	{CCI_REG8(0x4361),0xb0},
-	{CCI_REG8(0x4366),0x1e},
-	{CCI_REG8(0x440e),0x02},
-	{CCI_REG8(0x4501),0xb4},
-	{CCI_REG8(0x4509),0x41},
-	{CCI_REG8(0x450d),0x09},
-	{CCI_REG8(0x4800),0x24},
-	{CCI_REG8(0x4837),0x10},
-	{CCI_REG8(0x4900),0x24},
-	{CCI_REG8(0x4937),0x14},
-	{CCI_REG8(0x5000),0x0e},
-	{CCI_REG8(0x5799),0x00},
-	{CCI_REG8(0x5928),0x03},
-	{CCI_REG8(0x59e0),0xc8},
-	{CCI_REG8(0x59e1),0x1c},
-	{CCI_REG8(0x59e2),0x10},
-	{CCI_REG8(0x59e3),0x08},
-	{CCI_REG8(0x59e4),0x00},
-	{CCI_REG8(0x59e5),0x10},
-	{CCI_REG8(0x59e6),0x08},
-	{CCI_REG8(0x59e7),0x00},
-	{CCI_REG8(0x59e8),0x18},
-	{CCI_REG8(0x59e9),0x0c},
-	{CCI_REG8(0x59ea),0x04},
-	{CCI_REG8(0x59eb),0x18},
-	{CCI_REG8(0x59ec),0x0c},
-	{CCI_REG8(0x59ed),0x04},
-	{CCI_REG8(0x59ee),0xc8},
-	{CCI_REG8(0x59ef),0x1c},
-	{CCI_REG8(0x59f4),0x10},
-	{CCI_REG8(0x59f5),0x08},
-	{CCI_REG8(0x59f6),0x00},
-	{CCI_REG8(0x59f7),0x10},
-	{CCI_REG8(0x59f8),0x08},
-	{CCI_REG8(0x59f9),0x00},
-	{CCI_REG8(0x59fa),0x18},
-	{CCI_REG8(0x59fb),0x0c},
-	{CCI_REG8(0x59fc),0x04},
-	{CCI_REG8(0x59fd),0x18},
-	{CCI_REG8(0x59fe),0x0c},
-	{CCI_REG8(0x59ff),0x04},
+	{ CCI_REG8(0x3106), 0x01 },
+	{ CCI_REG8(0x3200), 0x00 },
+	{ CCI_REG8(0x3201), 0x00 },
+	{ CCI_REG8(0x3202), 0x00 },
+	{ CCI_REG8(0x3203), 0x64 },
+	{ CCI_REG8(0x3204), 0x0f },
+	{ CCI_REG8(0x3205), 0x0f },
+	{ CCI_REG8(0x3206), 0x08 },
+	{ CCI_REG8(0x3207), 0xdb },
+	{ CCI_REG8(0x3208), 0x0f },
+	{ CCI_REG8(0x3209), 0x00 },	/* width = 3840 */
+	{ CCI_REG8(0x320a), 0x08 },
+	{ CCI_REG8(0x320b), 0x70 },	/* height = 2160 */
+	{ CCI_REG8(0x320c), 0x02 },
+	{ CCI_REG8(0x320d), 0x58 },	/* HMAX */
+	{ CCI_REG8(0x320e), 0x09 },
+	{ CCI_REG8(0x320f), 0xc4 },	/* VMAX */
+	{ CCI_REG8(0x3210), 0x00 },
+	{ CCI_REG8(0x3211), 0x08 },
+	{ CCI_REG8(0x3212), 0x00 },
+	{ CCI_REG8(0x3213), 0x04 },
+	{ CCI_REG8(0x3271), 0x1b },
+	{ CCI_REG8(0x3273), 0x1f },
+	{ CCI_REG8(0x3275), 0x1b },
+	{ CCI_REG8(0x3277), 0x1f },
+	{ CCI_REG8(0x3306), 0x88 },
+	{ CCI_REG8(0x3308), 0x10 },
+	{ CCI_REG8(0x330a), 0x01 },
+	{ CCI_REG8(0x330b), 0x10 },
+	{ CCI_REG8(0x3314), 0xf0 },
+	{ CCI_REG8(0x3315), 0x20 },
+	{ CCI_REG8(0x3317), 0xb0 },
+	{ CCI_REG8(0x331f), 0x02 },
+	{ CCI_REG8(0x3320), 0xc1 },
+	{ CCI_REG8(0x3323), 0x02 },
+	{ CCI_REG8(0x3328), 0xfb },
+	{ CCI_REG8(0x3364), 0x0a },
+	{ CCI_REG8(0x3366), 0x04 },
+	{ CCI_REG8(0x3385), 0x25 },
+	{ CCI_REG8(0x3387), 0x6d },
+	{ CCI_REG8(0x33ef), 0x05 },
+	{ CCI_REG8(0x33f8), 0x02 },
+	{ CCI_REG8(0x33fa), 0x00 },
+	{ CCI_REG8(0x3410), 0xb0 },
+
+	{ CCI_REG8(0x34f0), 0x00 },	/* LED strobe: all on */
+
+	{ CCI_REG8(0x34f2), 0x0f },
+	{ CCI_REG8(0x3630), 0xa4 },
+	{ CCI_REG8(0x3637), 0x0f },
+	{ CCI_REG8(0x363b), 0x08 },
+	{ CCI_REG8(0x363c), 0x07 },
+	{ CCI_REG8(0x363d), 0x07 },
+	{ CCI_REG8(0x363e), 0x67 },
+	{ CCI_REG8(0x363f), 0x07 },
+	{ CCI_REG8(0x3648), 0x99 },
+	{ CCI_REG8(0x364e), 0x02 },
+	{ CCI_REG8(0x3654), 0x00 },
+	{ CCI_REG8(0x365c), 0x00 },
+	{ CCI_REG8(0x3727), 0x07 },
+	{ CCI_REG8(0x372d), 0x00 },
+	{ CCI_REG8(0x3731), 0x00 },
+	{ CCI_REG8(0x3732), 0x00 },
+	{ CCI_REG8(0x3733), 0x08 },
+	{ CCI_REG8(0x3904), 0x18 },
+	{ CCI_REG8(0x3905), 0x2c },
+	{ CCI_REG8(0x3907), 0x00 },	/* Black level high bits */
+	{ CCI_REG8(0x3908), 0x00 },	/* Black level low bits */
+	{ CCI_REG8(0x391d), 0x04 },
+	{ CCI_REG8(0x391f), 0x19 },
+	{ CCI_REG8(0x3926), 0x21 },
+	{ CCI_REG8(0x3927), 0x01 },
+	{ CCI_REG8(0x3950), 0x18 },
+	{ CCI_REG8(0x3e01), 0x4d },
+	{ CCI_REG8(0x3e02), 0xe0 },
+	{ CCI_REG8(0x3e03), 0x0b },
+	{ CCI_REG8(0x3e06), 0x00 },
+	{ CCI_REG8(0x3e08), 0x03 },
+	{ CCI_REG8(0x3e09), 0x40 },
+	{ CCI_REG8(0x4350), 0x00 },
+	{ CCI_REG8(0x4351), 0x00 },
+	{ CCI_REG8(0x4353), 0x37 },
+	{ CCI_REG8(0x4356), 0x12 },
+	{ CCI_REG8(0x4361), 0xb0 },
+	{ CCI_REG8(0x4366), 0x1e },
+	{ CCI_REG8(0x440e), 0x02 },
+	{ CCI_REG8(0x4501), 0xb4 },
+	{ CCI_REG8(0x4509), 0x41 },
+	{ CCI_REG8(0x450d), 0x09 },
+	{ CCI_REG8(0x4800), 0x24 },
+	{ CCI_REG8(0x4837), 0x10 },
+	{ CCI_REG8(0x4900), 0x24 },
+	{ CCI_REG8(0x4937), 0x14 },
+	{ CCI_REG8(0x5000), 0x0e },
+	{ CCI_REG8(0x5799), 0x00 },
+	{ CCI_REG8(0x5928), 0x03 },
+	{ CCI_REG8(0x59e0), 0xc8 },
+	{ CCI_REG8(0x59e1), 0x1c },
+	{ CCI_REG8(0x59e2), 0x10 },
+	{ CCI_REG8(0x59e3), 0x08 },
+	{ CCI_REG8(0x59e4), 0x00 },
+	{ CCI_REG8(0x59e5), 0x10 },
+	{ CCI_REG8(0x59e6), 0x08 },
+	{ CCI_REG8(0x59e7), 0x00 },
+	{ CCI_REG8(0x59e8), 0x18 },
+	{ CCI_REG8(0x59e9), 0x0c },
+	{ CCI_REG8(0x59ea), 0x04 },
+	{ CCI_REG8(0x59eb), 0x18 },
+	{ CCI_REG8(0x59ec), 0x0c },
+	{ CCI_REG8(0x59ed), 0x04 },
+	{ CCI_REG8(0x59ee), 0xc8 },
+	{ CCI_REG8(0x59ef), 0x1c },
+	{ CCI_REG8(0x59f4), 0x10 },
+	{ CCI_REG8(0x59f5), 0x08 },
+	{ CCI_REG8(0x59f6), 0x00 },
+	{ CCI_REG8(0x59f7), 0x10 },
+	{ CCI_REG8(0x59f8), 0x08 },
+	{ CCI_REG8(0x59f9), 0x00 },
+	{ CCI_REG8(0x59fa), 0x18 },
+	{ CCI_REG8(0x59fb), 0x0c },
+	{ CCI_REG8(0x59fc), 0x04 },
+	{ CCI_REG8(0x59fd), 0x18 },
+	{ CCI_REG8(0x59fe), 0x0c },
+	{ CCI_REG8(0x59ff), 0x04 },
 };
 
 static const struct cci_reg_sequence mode_3840x2160_12bit_regs[] = {
-    {CCI_REG8(0x3031), 0x0c},
-    {SC910GS_REG_VMAX, SC910GS_VMAX_12BIT},
+	{ CCI_REG8(0x3031), 0x0c },
+	{ SC910GS_REG_VMAX, SC910GS_VMAX_12BIT },
 };
 
 static const struct cci_reg_sequence mode_3840x2160_10bit_regs[] = {
-    {CCI_REG8(0x3031), 0x0a},
-    {SC910GS_REG_VMAX, SC910GS_VMAX_10BIT},
+	{ CCI_REG8(0x3031), 0x0a },
+	{ SC910GS_REG_VMAX, SC910GS_VMAX_10BIT },
 };
 
 static const struct cci_reg_sequence mode_3840x2160_8bit_regs[] = {
-    {CCI_REG8(0x3031), 0x08},
-    {SC910GS_REG_VMAX, SC910GS_VMAX_8BIT},
+	{ CCI_REG8(0x3031), 0x08 },
+	{ SC910GS_REG_VMAX, SC910GS_VMAX_8BIT },
 };
-
 
 /* Mode description */
 struct sc910gs_mode {
-    u32 code;
-    unsigned int width;
-    unsigned int height;
-    u32 vmax_def;
-    u32 vblank_min;
-    u32 pixel_rate;
-    u32 link_freq_index;
-    struct v4l2_rect crop;
-    struct {
-        unsigned int num_of_regs;
-        const struct cci_reg_sequence *regs;
-    } reg_list;
+	u32 code;
+	unsigned int width;
+	unsigned int height;
+	u32 vmax_def;
+	u32 vblank_min;
+	u32 pixel_rate;
+	u32 link_freq_index;
+	struct v4l2_rect crop;
+	struct {
+		unsigned int num_of_regs;
+		const struct cci_reg_sequence *regs;
+	} reg_list;
 };
 
 static const struct sc910gs_mode supported_modes[] = {
-    {
-        .code = MEDIA_BUS_FMT_SBGGR12_1X12,
-        .width = SC910GS_MODE_WIDTH,
-        .height = SC910GS_MODE_HEIGHT,
-        .vmax_def = SC910GS_VMAX_12BIT,
-        .vblank_min = SC910GS_VMAX_12BIT - SC910GS_MODE_HEIGHT,
-        .pixel_rate = SC910GS_PIXEL_RATE,
-        .link_freq_index = 0,
-        .crop = {
-            .left = SC910GS_MODE_CROP_LEFT,
-            .top = SC910GS_MODE_CROP_TOP,
-            .width = SC910GS_MODE_WIDTH,
-            .height = SC910GS_MODE_HEIGHT,
-        },
-        .reg_list = {
-            .num_of_regs = ARRAY_SIZE(mode_3840x2160_12bit_regs),
-            .regs = mode_3840x2160_12bit_regs,
-        },
-    },
-    {
-        .code = MEDIA_BUS_FMT_SBGGR10_1X10,
-        .width = SC910GS_MODE_WIDTH,
-        .height = SC910GS_MODE_HEIGHT,
-        .vmax_def = SC910GS_VMAX_10BIT,
-        .vblank_min = SC910GS_VMAX_10BIT - SC910GS_MODE_HEIGHT,
-        .pixel_rate = SC910GS_PIXEL_RATE,
-        .link_freq_index = 0,
-        .crop = {
-            .left = SC910GS_MODE_CROP_LEFT,
-            .top = SC910GS_MODE_CROP_TOP,
-            .width = SC910GS_MODE_WIDTH,
-            .height = SC910GS_MODE_HEIGHT,
-        },
-        .reg_list = {
-            .num_of_regs = ARRAY_SIZE(mode_3840x2160_10bit_regs),
-            .regs = mode_3840x2160_10bit_regs,
-        },
-    },
-    {
-        .code = MEDIA_BUS_FMT_SBGGR8_1X8,
-        .width = SC910GS_MODE_WIDTH,
-        .height = SC910GS_MODE_HEIGHT,
-        .vmax_def = SC910GS_VMAX_8BIT,
-        .vblank_min = SC910GS_VMAX_8BIT - SC910GS_MODE_HEIGHT,
-        .pixel_rate = SC910GS_PIXEL_RATE,
-        .link_freq_index = 0,
-        .crop = {
-            .left = SC910GS_MODE_CROP_LEFT,
-            .top = SC910GS_MODE_CROP_TOP,
-            .width = SC910GS_MODE_WIDTH,
-            .height = SC910GS_MODE_HEIGHT,
-        },
-        .reg_list = {
-            .num_of_regs = ARRAY_SIZE(mode_3840x2160_8bit_regs),
-            .regs = mode_3840x2160_8bit_regs,
-        },
-    },
+	{
+		.code = MEDIA_BUS_FMT_SBGGR12_1X12,
+		.width = SC910GS_MODE_WIDTH,
+		.height = SC910GS_MODE_HEIGHT,
+		.vmax_def = SC910GS_VMAX_12BIT,
+		.vblank_min = SC910GS_VMAX_12BIT - SC910GS_MODE_HEIGHT,
+		.pixel_rate = SC910GS_PIXEL_RATE,
+		.link_freq_index = 0,
+		.crop = {
+			.left = SC910GS_MODE_CROP_LEFT,
+			.top = SC910GS_MODE_CROP_TOP,
+			.width = SC910GS_MODE_WIDTH,
+			.height = SC910GS_MODE_HEIGHT,
+		},
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(mode_3840x2160_12bit_regs),
+			.regs = mode_3840x2160_12bit_regs,
+		},
+	},
+	{
+		.code = MEDIA_BUS_FMT_SBGGR10_1X10,
+		.width = SC910GS_MODE_WIDTH,
+		.height = SC910GS_MODE_HEIGHT,
+		.vmax_def = SC910GS_VMAX_10BIT,
+		.vblank_min = SC910GS_VMAX_10BIT - SC910GS_MODE_HEIGHT,
+		.pixel_rate = SC910GS_PIXEL_RATE,
+		.link_freq_index = 0,
+		.crop = {
+			.left = SC910GS_MODE_CROP_LEFT,
+			.top = SC910GS_MODE_CROP_TOP,
+			.width = SC910GS_MODE_WIDTH,
+			.height = SC910GS_MODE_HEIGHT,
+		},
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(mode_3840x2160_10bit_regs),
+			.regs = mode_3840x2160_10bit_regs,
+		},
+	},
+	{
+		.code = MEDIA_BUS_FMT_SBGGR8_1X8,
+		.width = SC910GS_MODE_WIDTH,
+		.height = SC910GS_MODE_HEIGHT,
+		.vmax_def = SC910GS_VMAX_8BIT,
+		.vblank_min = SC910GS_VMAX_8BIT - SC910GS_MODE_HEIGHT,
+		.pixel_rate = SC910GS_PIXEL_RATE,
+		.link_freq_index = 0,
+		.crop = {
+			.left = SC910GS_MODE_CROP_LEFT,
+			.top = SC910GS_MODE_CROP_TOP,
+			.width = SC910GS_MODE_WIDTH,
+			.height = SC910GS_MODE_HEIGHT,
+		},
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(mode_3840x2160_8bit_regs),
+			.regs = mode_3840x2160_8bit_regs,
+		},
+	},
 };
 
-static const char * const sc910gs_test_pattern_menu[] = {
-    "Disabled",
-    "Incremental",
+static const char *const sc910gs_test_pattern_menu[] = {
+	"Disabled",
+	"Incremental",
 };
 
 /* Regulators */
-static const char * const sc910gs_supply_name[] = {
-    "vana", /* 2.8V analog */
-    "vdig", /* 1.5V core   */
-    "vddl", /* 1.8V I/O    */
+static const char *const sc910gs_supply_name[] = {
+	"vana",			/* 2.8V analog */
+	"vdig",			/* 1.5V core   */
+	"vddl",			/* 1.8V I/O    */
 };
 
 #define SC910GS_NUM_SUPPLIES ARRAY_SIZE(sc910gs_supply_name)
@@ -372,149 +366,149 @@ static const char * const sc910gs_supply_name[] = {
  */
 
 struct sc910gs {
-    struct v4l2_subdev sd;
-    struct media_pad pad;
-    struct device *dev;
-    struct regmap *regmap;
+	struct v4l2_subdev sd;
+	struct media_pad pad;
+	struct device *dev;
+	struct regmap *regmap;
 
-    struct clk *xclk;
+	struct clk *xclk;
 
-    struct gpio_desc *reset_gpio;
-    struct regulator_bulk_data supplies[SC910GS_NUM_SUPPLIES];
+	struct gpio_desc *reset_gpio;
+	struct regulator_bulk_data supplies[SC910GS_NUM_SUPPLIES];
 
-    struct v4l2_ctrl_handler ctrl_handler;
+	struct v4l2_ctrl_handler ctrl_handler;
 
-    /* Controls */
-    struct v4l2_ctrl *pixel_rate;
-    struct v4l2_ctrl *link_freq;
-    struct v4l2_ctrl *exposure;
-    struct v4l2_ctrl *gain;
-    struct v4l2_ctrl *vflip;
-    struct v4l2_ctrl *hflip;
-    struct v4l2_ctrl *vblank;
-    struct v4l2_ctrl *hblank;
-    struct v4l2_ctrl *blacklevel;
-    struct v4l2_ctrl *test_pattern;
+	/* Controls */
+	struct v4l2_ctrl *pixel_rate;
+	struct v4l2_ctrl *link_freq;
+	struct v4l2_ctrl *exposure;
+	struct v4l2_ctrl *gain;
+	struct v4l2_ctrl *vflip;
+	struct v4l2_ctrl *hflip;
+	struct v4l2_ctrl *vblank;
+	struct v4l2_ctrl *hblank;
+	struct v4l2_ctrl *blacklevel;
+	struct v4l2_ctrl *test_pattern;
 
-
-    bool streaming;
+	bool streaming;
 };
 
 /* Helpers */
 
 static inline struct sc910gs *to_sc910gs(struct v4l2_subdev *sd)
 {
-    return container_of(sd, struct sc910gs, sd);
+	return container_of(sd, struct sc910gs, sd);
 }
 
 static bool sc910gs_is_format_code_supported(u32 code)
 {
-    unsigned int i;
+	unsigned int i;
 
-    for (i = 0; i < ARRAY_SIZE(sc910gs_mbus_codes); i++)
-        if (sc910gs_mbus_codes[i] == code)
-            return true;
+	for (i = 0; i < ARRAY_SIZE(sc910gs_mbus_codes); i++)
+		if (sc910gs_mbus_codes[i] == code)
+			return true;
 
-    return false;
+	return false;
 }
 
 static u32 sc910gs_get_format_code(u32 code)
 {
-    /*
-     * SC910GS mirror/flip changes readout direction, but the output Bayer
-     * phase remains the same. Reporting transformed Bayer orders makes the
-     * ISP demosaic single-axis flips with the wrong colour channels.
-     */
-    if (sc910gs_is_format_code_supported(code))
-        return code;
+	/*
+	 * SC910GS mirror/flip changes readout direction, but the output Bayer
+	 * phase remains the same. Reporting transformed Bayer orders makes the
+	 * ISP demosaic single-axis flips with the wrong colour channels.
+	 */
+	if (sc910gs_is_format_code_supported(code))
+		return code;
 
-    return MEDIA_BUS_FMT_SBGGR12_1X12;
+	return MEDIA_BUS_FMT_SBGGR12_1X12;
 }
 
 static const struct sc910gs_mode *sc910gs_find_mode(u32 code, u32 width,
-                            u32 height)
+						    u32 height)
 {
-    const struct sc910gs_mode *best = NULL;
-    unsigned int i;
-    u32 best_delta = U32_MAX;
+	const struct sc910gs_mode *best = NULL;
+	unsigned int i;
+	u32 best_delta = U32_MAX;
 
-    code = sc910gs_get_format_code(code);
+	code = sc910gs_get_format_code(code);
 
-    for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
-        const struct sc910gs_mode *mode = &supported_modes[i];
-        u32 delta;
+	for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+		const struct sc910gs_mode *mode = &supported_modes[i];
+		u32 delta;
 
-        if (mode->code != code)
-            continue;
+		if (mode->code != code)
+			continue;
 
-        delta = abs((s32)mode->width - (s32)width) +
-            abs((s32)mode->height - (s32)height);
-        if (!best || delta < best_delta) {
-            best = mode;
-            best_delta = delta;
-        }
-    }
+		delta = abs((s32) mode->width - (s32) width) +
+		    abs((s32) mode->height - (s32) height);
+		if (!best || delta < best_delta) {
+			best = mode;
+			best_delta = delta;
+		}
+	}
 
-    return best ? best : &supported_modes[0];
+	return best ? best : &supported_modes[0];
 }
 
 static void sc910gs_update_ctrl_ranges(struct sc910gs *sc910gs,
-                       const struct sc910gs_mode *mode)
+				       const struct sc910gs_mode *mode)
 {
-    u32 vblank_def = mode->vmax_def - mode->height;
-    u32 vblank_max = 0xffff - mode->height;
-    u32 exposure_max = SC910GS_EXPOSURE_MAX(mode->vmax_def);
+	u32 vblank_def = mode->vmax_def - mode->height;
+	u32 vblank_max = 0xffff - mode->height;
+	u32 exposure_max = SC910GS_EXPOSURE_MAX(mode->vmax_def);
 
-    __v4l2_ctrl_s_ctrl_int64(sc910gs->pixel_rate, mode->pixel_rate);
-    __v4l2_ctrl_s_ctrl(sc910gs->link_freq, mode->link_freq_index);
-    __v4l2_ctrl_modify_range(sc910gs->vblank, mode->vblank_min,
-                 vblank_max, 1, vblank_def);
-    __v4l2_ctrl_s_ctrl(sc910gs->vblank, vblank_def);
-    __v4l2_ctrl_modify_range(sc910gs->exposure, SC910GS_EXPOSURE_MIN,
-                 exposure_max, SC910GS_EXPOSURE_STEP,
-                 min_t(u32, SC910GS_EXPOSURE_DEFAULT, exposure_max));
+	__v4l2_ctrl_s_ctrl_int64(sc910gs->pixel_rate, mode->pixel_rate);
+	__v4l2_ctrl_s_ctrl(sc910gs->link_freq, mode->link_freq_index);
+	__v4l2_ctrl_modify_range(sc910gs->vblank, mode->vblank_min,
+				 vblank_max, 1, vblank_def);
+	__v4l2_ctrl_s_ctrl(sc910gs->vblank, vblank_def);
+	__v4l2_ctrl_modify_range(sc910gs->exposure, SC910GS_EXPOSURE_MIN,
+				 exposure_max, SC910GS_EXPOSURE_STEP,
+				 min_t(u32, SC910GS_EXPOSURE_DEFAULT,
+				       exposure_max));
 }
 
 static inline void sc910gs_gain_idx_to_regs(u16 idx, u8 *ana_gain, u8 *ana_fine)
 {
-    static const u8 ana_tbl[] = { 0x23, 0x27, 0x2F, 0x3F };
-    u16 seg, off;
+	static const u8 ana_tbl[] = { 0x23, 0x27, 0x2F, 0x3F };
+	u16 seg, off;
 
-    if (!ana_gain || !ana_fine)
-        return;
+	if (!ana_gain || !ana_fine)
+		return;
 
-    /* clamp to valid range */
-    if (idx > SC910GS_ANA_GAIN_MAX)
-        idx = SC910GS_ANA_GAIN_MAX;
+	/* clamp to valid range */
+	if (idx > SC910GS_ANA_GAIN_MAX)
+		idx = SC910GS_ANA_GAIN_MAX;
 
-    /* Segment 0: ANA=0x03, FINE 0x40..0x7F */
-    if (idx < 64) {
-        *ana_gain = 0x03;
-        *ana_fine = 0x40 + idx;
-        return;
-    }
-    idx -= 64;
+	/* Segment 0: ANA=0x03, FINE 0x40..0x7F */
+	if (idx < 64) {
+		*ana_gain = 0x03;
+		*ana_fine = 0x40 + idx;
+		return;
+	}
+	idx -= 64;
 
-    /* Segment 1: ANA=0x07, FINE 0x40..0x5C (29 entries) */
-    if (idx < 29) {
-        *ana_gain = 0x07;
-        *ana_fine = 0x40 + idx; /* up to 0x5C */
-        return;
-    }
-    idx -= 29;
+	/* Segment 1: ANA=0x07, FINE 0x40..0x5C (29 entries) */
+	if (idx < 29) {
+		*ana_gain = 0x07;
+		*ana_fine = 0x40 + idx;	/* up to 0x5C */
+		return;
+	}
+	idx -= 29;
 
-    /* Segments 2..5: ANA in ana_tbl[], FINE 0x40..0x7F */
-    seg = idx / 64;
-    off = idx % 64;
+	/* Segments 2..5: ANA in ana_tbl[], FINE 0x40..0x7F */
+	seg = idx / 64;
+	off = idx % 64;
 
-    /* Safety clamp (shouldn’t trigger for idx<=348) */
-    if (seg >= ARRAY_SIZE(ana_tbl)) {
-        seg = ARRAY_SIZE(ana_tbl) - 1;
-        off = 63;
-    }
+	/* Safety clamp (should not trigger for idx <= 348). */
+	if (seg >= ARRAY_SIZE(ana_tbl)) {
+		seg = ARRAY_SIZE(ana_tbl) - 1;
+		off = 63;
+	}
 
-    *ana_gain = ana_tbl[seg];
-    *ana_fine = 0x40 + off;
+	*ana_gain = ana_tbl[seg];
+	*ana_fine = 0x40 + off;
 }
 
 /* --------------------------------------------------------------------------
@@ -524,180 +518,196 @@ static inline void sc910gs_gain_idx_to_regs(u16 idx, u8 *ana_gain, u8 *ana_fine)
 
 static int sc910gs_set_ctrl(struct v4l2_ctrl *ctrl)
 {
-    struct sc910gs *sc910gs = container_of(ctrl->handler, struct sc910gs, ctrl_handler);
-    const struct sc910gs_mode *mode;
-    struct v4l2_subdev_state *state;
-    struct v4l2_mbus_framefmt *fmt;
-    int pm_ret, ret = 0;
-    u32 vmax, exposure_max;
+	struct sc910gs *sc910gs =
+	    container_of(ctrl->handler, struct sc910gs, ctrl_handler);
+	const struct sc910gs_mode *mode;
+	struct v4l2_subdev_state *state;
+	struct v4l2_mbus_framefmt *fmt;
+	int pm_ret, ret = 0;
+	u32 vmax, exposure_max;
 
+	state = v4l2_subdev_get_locked_active_state(&sc910gs->sd);
+	fmt = v4l2_subdev_state_get_format(state, 0);
+	mode = sc910gs_find_mode(fmt->code, fmt->width, fmt->height);
 
-    state = v4l2_subdev_get_locked_active_state(&sc910gs->sd);
-    fmt = v4l2_subdev_state_get_format(state, 0);
-    mode = sc910gs_find_mode(fmt->code, fmt->width, fmt->height);
+	if (ctrl->id == V4L2_CID_VBLANK && sc910gs->exposure) {
+		vmax = ctrl->val + mode->height;
+		exposure_max = SC910GS_EXPOSURE_MAX(vmax);
+		__v4l2_ctrl_modify_range(sc910gs->exposure,
+					 SC910GS_EXPOSURE_MIN, exposure_max,
+					 SC910GS_EXPOSURE_STEP,
+					 min_t(u32, SC910GS_EXPOSURE_DEFAULT,
+					       exposure_max));
+	}
 
-    if (ctrl->id == V4L2_CID_VBLANK && sc910gs->exposure) {
-        vmax = ctrl->val + mode->height;
-        exposure_max = SC910GS_EXPOSURE_MAX(vmax);
-        __v4l2_ctrl_modify_range(sc910gs->exposure,
-                     SC910GS_EXPOSURE_MIN, exposure_max,
-                     SC910GS_EXPOSURE_STEP, SC910GS_EXPOSURE_DEFAULT);
-    }
+	/* Apply control only when powered (runtime active). */
+	pm_ret = pm_runtime_get_if_in_use(sc910gs->dev);
+	if (pm_ret <= 0)
+		return 0;
 
-    if (ctrl->id == V4L2_CID_VFLIP || ctrl->id == V4L2_CID_HFLIP)
-        fmt->code = sc910gs_get_format_code(fmt->code);
+	switch (ctrl->id) {
+	case V4L2_CID_EXPOSURE:
+		dev_dbg(sc910gs->dev, "EXPOSURE=%u\n", ctrl->val);
+		ret = cci_write(sc910gs->regmap, SC910GS_REG_EXPOSURE,
+				SC910GS_EXPOSURE_TO_REG((u32)ctrl->val) << 4,
+				NULL);
+		break;
+	case V4L2_CID_ANALOGUE_GAIN: {
+		u8 ana_gain, ana_fine = 0;
 
-    /* Apply control only when powered (runtime active). */
-    pm_ret = pm_runtime_get_if_in_use(sc910gs->dev);
-    if (pm_ret <= 0)
-        return 0;
+		dev_dbg(sc910gs->dev, "ANALOG_GAIN=%u\n", ctrl->val);
+		sc910gs_gain_idx_to_regs(ctrl->val, &ana_gain, &ana_fine);
+		cci_update_bits(sc910gs->regmap, SC910GS_REG_AGC_CTRL,
+				SC910GS_AGC_CTRL_MASK, SC910GS_AGC_CTRL_MANUAL,
+				&ret);
+		cci_write(sc910gs->regmap, SC910GS_REG_ANALOG_GAIN, ana_gain,
+			  &ret);
+		cci_write(sc910gs->regmap, SC910GS_REG_ANALOG_GAIN_FINE,
+			  ana_fine, &ret);
+		if (ret)
+			dev_err_ratelimited(sc910gs->dev,
+					    "Gain write failed (%d)\n", ret);
+		break;
+	}
+	case V4L2_CID_VBLANK:
+		vmax = ctrl->val + mode->height;
+		dev_dbg(sc910gs->dev, "VBLANK=%u -> VMAX=%u\n", ctrl->val,
+			vmax);
+		ret = cci_write(sc910gs->regmap, SC910GS_REG_VMAX, vmax, NULL);
+		break;
+	case V4L2_CID_HBLANK:
+		break;
+	case V4L2_CID_VFLIP:
+		dev_dbg(sc910gs->dev, "V4L2_CID_VFLIP=%u\n", ctrl->val);
+		cci_update_bits(sc910gs->regmap, SC910GS_REG_FLIP,
+				SC910GS_VFLIP_MASK,
+				FIELD_PREP(SC910GS_VFLIP_MASK,
+					   0x07 * ctrl->val), &ret);
+		break;
+	case V4L2_CID_HFLIP:
+		dev_dbg(sc910gs->dev, "V4L2_CID_HFLIP=%u\n", ctrl->val);
+		cci_update_bits(sc910gs->regmap, SC910GS_REG_FLIP,
+				SC910GS_HFLIP_MASK,
+				FIELD_PREP(SC910GS_HFLIP_MASK,
+					   0x03 * ctrl->val), &ret);
+		break;
+	case V4L2_CID_BRIGHTNESS: {
+		u16 blacklevel = ctrl->val;
 
-    switch (ctrl->id) {
-    case V4L2_CID_EXPOSURE: {
-        dev_dbg(sc910gs->dev, "EXPOSURE=%u\n", ctrl->val);
-        ret = cci_write(sc910gs->regmap, SC910GS_REG_EXPOSURE,
-                SC910GS_EXPOSURE_TO_REG((u32)ctrl->val) << 4, NULL);
-        break;
-    }
-    case V4L2_CID_ANALOGUE_GAIN: {
-        u8 ana_gain, ana_fine = 0;
-        dev_dbg(sc910gs->dev, "ANALOG_GAIN=%u\n", ctrl->val);
-        sc910gs_gain_idx_to_regs(ctrl->val, &ana_gain, &ana_fine);
-        cci_update_bits(sc910gs->regmap, SC910GS_REG_AGC_CTRL,
-                SC910GS_AGC_CTRL_MASK, SC910GS_AGC_CTRL_MANUAL, &ret);
-        cci_write(sc910gs->regmap, SC910GS_REG_ANALOG_GAIN, ana_gain, &ret);
-        cci_write(sc910gs->regmap, SC910GS_REG_ANALOG_GAIN_FINE, ana_fine, &ret);
-        if (ret)
-            dev_err_ratelimited(sc910gs->dev, "Gain write failed (%d)\n", ret);
-        break;
-    }
-    case V4L2_CID_VBLANK: {
-        vmax = ctrl->val + mode->height;
-        dev_dbg(sc910gs->dev, "VBLANK=%u -> VMAX=%u\n", ctrl->val, vmax);
-        ret = cci_write(sc910gs->regmap, SC910GS_REG_VMAX, vmax, NULL);
-        break;
-    }
-    case V4L2_CID_HBLANK: {
-        break;
-    }
-    case V4L2_CID_VFLIP:
-        dev_dbg(sc910gs->dev, "V4L2_CID_VFLIP=%u\n", ctrl->val);
-        cci_update_bits(sc910gs->regmap, SC910GS_REG_FLIP, SC910GS_VFLIP_MASK, FIELD_PREP(SC910GS_VFLIP_MASK, 0x07*ctrl->val), &ret);
-        break;
-    case V4L2_CID_HFLIP:
-        dev_dbg(sc910gs->dev, "V4L2_CID_HFLIP=%u\n", ctrl->val);
-        cci_update_bits(sc910gs->regmap, SC910GS_REG_FLIP, SC910GS_HFLIP_MASK, FIELD_PREP(SC910GS_HFLIP_MASK, 0x03*ctrl->val), &ret);
-        break;
-    case V4L2_CID_BRIGHTNESS: {
-        u16 blacklevel = min_t(u32, ctrl->val, 4095);
-        ret = cci_write(sc910gs->regmap, SC910GS_REG_BLKLEVEL, blacklevel, NULL);
-        break;
-    }
-    case V4L2_CID_TEST_PATTERN:
-        ret = cci_write(sc910gs->regmap, SC910GS_REG_TEST_PATTERN,
-                ctrl->val ? SC910GS_TEST_PATTERN_INCREMENTAL :
-                SC910GS_TEST_PATTERN_DISABLED, NULL);
-        break;
-    default:
-        dev_dbg(sc910gs->dev, "Unhandled ctrl %s: id=0x%x, val=0x%x\n",
-            ctrl->name, ctrl->id, ctrl->val);
-        break;
-    }
+		ret = cci_write(sc910gs->regmap, SC910GS_REG_BLKLEVEL,
+				blacklevel, NULL);
+		break;
+	}
+	case V4L2_CID_TEST_PATTERN:
+		ret = cci_write(sc910gs->regmap, SC910GS_REG_TEST_PATTERN,
+				ctrl->val ? SC910GS_TEST_PATTERN_INCREMENTAL :
+				SC910GS_TEST_PATTERN_DISABLED, NULL);
+		break;
+	default:
+		dev_dbg(sc910gs->dev, "Unhandled ctrl %s: id=0x%x, val=0x%x\n",
+			ctrl->name, ctrl->id, ctrl->val);
+		break;
+	}
 
-    pm_runtime_mark_last_busy(sc910gs->dev);
-    pm_runtime_put_autosuspend(sc910gs->dev);
-    return ret;
+	pm_runtime_mark_last_busy(sc910gs->dev);
+	pm_runtime_put_autosuspend(sc910gs->dev);
+	return ret;
 }
 
 static const struct v4l2_ctrl_ops sc910gs_ctrl_ops = {
-    .s_ctrl = sc910gs_set_ctrl,
+	.s_ctrl = sc910gs_set_ctrl,
 };
-
 
 static int sc910gs_init_controls(struct sc910gs *sc910gs)
 {
-    struct v4l2_ctrl_handler *hdl = &sc910gs->ctrl_handler;
-    struct v4l2_fwnode_device_properties props;
-    const struct sc910gs_mode *mode = &supported_modes[0];
-    u32 vblank_def = mode->vmax_def - mode->height;
-    u32 exposure_max = SC910GS_EXPOSURE_MAX(mode->vmax_def);
-    int ret;
+	struct v4l2_ctrl_handler *hdl = &sc910gs->ctrl_handler;
+	struct v4l2_fwnode_device_properties props;
+	const struct sc910gs_mode *mode = &supported_modes[0];
+	u32 vblank_def = mode->vmax_def - mode->height;
+	u32 exposure_max = SC910GS_EXPOSURE_MAX(mode->vmax_def);
+	int ret;
 
-    ret = v4l2_ctrl_handler_init(hdl, 18);
+	ret = v4l2_ctrl_handler_init(hdl, 18);
 
-    /* Read-only */
-    sc910gs->pixel_rate = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
-                           V4L2_CID_PIXEL_RATE,
-                           SC910GS_PIXEL_RATE, SC910GS_PIXEL_RATE,
-                           1, mode->pixel_rate);
-    if (sc910gs->pixel_rate)
-        sc910gs->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+	/* Read-only */
+	sc910gs->pixel_rate = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
+						V4L2_CID_PIXEL_RATE,
+						SC910GS_PIXEL_RATE,
+						SC910GS_PIXEL_RATE, 1,
+						mode->pixel_rate);
+	if (sc910gs->pixel_rate)
+		sc910gs->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
-    sc910gs->link_freq =
-        v4l2_ctrl_new_int_menu(hdl, &sc910gs_ctrl_ops, V4L2_CID_LINK_FREQ,
-                       0, 0, sc910gs_link_freq_menu);
-    if (sc910gs->link_freq)
-        sc910gs->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+	sc910gs->link_freq =
+	    v4l2_ctrl_new_int_menu(hdl, &sc910gs_ctrl_ops, V4L2_CID_LINK_FREQ,
+				   0, 0, sc910gs_link_freq_menu);
+	if (sc910gs->link_freq)
+		sc910gs->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
-    sc910gs->vblank = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
-                       V4L2_CID_VBLANK, mode->vblank_min,
-                       0xFFFF - mode->height, 1, vblank_def);
+	sc910gs->vblank = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
+					    V4L2_CID_VBLANK, mode->vblank_min,
+					    0xFFFF - mode->height, 1,
+					    vblank_def);
 
-    sc910gs->hblank = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
-                       V4L2_CID_HBLANK, 0, 0, 1, 0);
-    if (sc910gs->hblank)
-        sc910gs->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+	sc910gs->hblank = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
+					    V4L2_CID_HBLANK, 0, 0, 1, 0);
+	if (sc910gs->hblank)
+		sc910gs->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
-    sc910gs->exposure = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
-                         V4L2_CID_EXPOSURE,
-                         SC910GS_EXPOSURE_MIN, exposure_max,
-                         SC910GS_EXPOSURE_STEP, SC910GS_EXPOSURE_DEFAULT);
+	sc910gs->exposure = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
+					      V4L2_CID_EXPOSURE,
+					      SC910GS_EXPOSURE_MIN,
+					      exposure_max,
+					      SC910GS_EXPOSURE_STEP,
+					      SC910GS_EXPOSURE_DEFAULT);
 
-    sc910gs->gain = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
-                     SC910GS_ANA_GAIN_MIN, SC910GS_ANA_GAIN_MAX,
-                     SC910GS_ANA_GAIN_STEP, SC910GS_ANA_GAIN_DEFAULT);
+	sc910gs->gain =
+	    v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
+			      SC910GS_ANA_GAIN_MIN, SC910GS_ANA_GAIN_MAX,
+			      SC910GS_ANA_GAIN_STEP, SC910GS_ANA_GAIN_DEFAULT);
 
-    sc910gs->vflip = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
-                      V4L2_CID_VFLIP, 0, 1, 1, 0);
+	sc910gs->vflip = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
+					   V4L2_CID_VFLIP, 0, 1, 1, 0);
 
-    sc910gs->hflip = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
-                      V4L2_CID_HFLIP, 0, 1, 1, 0);
+	sc910gs->hflip = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
+					   V4L2_CID_HFLIP, 0, 1, 1, 0);
 
-    sc910gs->blacklevel = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
-                           V4L2_CID_BRIGHTNESS, 0, 0x1000-1, 1,
-                           SC910GS_BLKLEVEL_DEFAULT);
+	sc910gs->blacklevel = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
+						V4L2_CID_BRIGHTNESS, 0,
+						0x1000 - 1, 1,
+						SC910GS_BLKLEVEL_DEFAULT);
 
-    sc910gs->test_pattern =
-        v4l2_ctrl_new_std_menu_items(hdl, &sc910gs_ctrl_ops,
-                         V4L2_CID_TEST_PATTERN,
-                         ARRAY_SIZE(sc910gs_test_pattern_menu) - 1,
-                         0, 0, sc910gs_test_pattern_menu);
+	sc910gs->test_pattern =
+	    v4l2_ctrl_new_std_menu_items(hdl, &sc910gs_ctrl_ops,
+					 V4L2_CID_TEST_PATTERN,
+					 ARRAY_SIZE(sc910gs_test_pattern_menu) -
+					 1, 0, 0, sc910gs_test_pattern_menu);
 
-    if (hdl->error) {
-        ret = hdl->error;
-        dev_err(sc910gs->dev, "control init failed (%d)\n", ret);
-        goto err_free;
-    }
+	if (hdl->error) {
+		ret = hdl->error;
+		dev_err(sc910gs->dev, "control init failed (%d)\n", ret);
+		goto err_free;
+	}
 
-    ret = v4l2_fwnode_device_parse(sc910gs->dev, &props);
-    if (ret)
-        goto err_free;
+	ret = v4l2_fwnode_device_parse(sc910gs->dev, &props);
+	if (ret)
+		goto err_free;
 
-    ret = v4l2_ctrl_new_fwnode_properties(hdl, &sc910gs_ctrl_ops, &props);
-    if (ret)
-        goto err_free;
+	ret = v4l2_ctrl_new_fwnode_properties(hdl, &sc910gs_ctrl_ops, &props);
+	if (ret)
+		goto err_free;
 
-    sc910gs->sd.ctrl_handler = hdl;
-    return 0;
+	sc910gs->sd.ctrl_handler = hdl;
+	return 0;
 
 err_free:
-    v4l2_ctrl_handler_free(hdl);
-    return ret;
+	v4l2_ctrl_handler_free(hdl);
+	return ret;
 }
 
 static void sc910gs_free_controls(struct sc910gs *sc910gs)
 {
-    v4l2_ctrl_handler_free(sc910gs->sd.ctrl_handler);
+	v4l2_ctrl_handler_free(sc910gs->sd.ctrl_handler);
 }
 
 /* --------------------------------------------------------------------------
@@ -706,82 +716,80 @@ static void sc910gs_free_controls(struct sc910gs *sc910gs)
  */
 
 static int sc910gs_enum_mbus_code(struct v4l2_subdev *sd,
-                 struct v4l2_subdev_state *sd_state,
-                 struct v4l2_subdev_mbus_code_enum *code)
+				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_mbus_code_enum *code)
 {
-    if (code->index >= ARRAY_SIZE(sc910gs_mbus_codes))
-        return -EINVAL;
+	if (code->index >= ARRAY_SIZE(sc910gs_mbus_codes))
+		return -EINVAL;
 
-    code->code = sc910gs_mbus_codes[code->index];
-    return 0;
+	code->code = sc910gs_mbus_codes[code->index];
+	return 0;
 }
 
 static int sc910gs_enum_frame_size(struct v4l2_subdev *sd,
-                  struct v4l2_subdev_state *sd_state,
-                  struct v4l2_subdev_frame_size_enum *fse)
+				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_frame_size_enum *fse)
 {
-    unsigned int i, index = 0;
+	unsigned int i, index = 0;
 
-    if (fse->code != sc910gs_get_format_code(fse->code))
-        return -EINVAL;
+	if (fse->code != sc910gs_get_format_code(fse->code))
+		return -EINVAL;
 
-    for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
-        const struct sc910gs_mode *mode = &supported_modes[i];
+	for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+		const struct sc910gs_mode *mode = &supported_modes[i];
 
-        if (mode->code != fse->code)
-            continue;
+		if (mode->code != fse->code)
+			continue;
 
-        if (index++ != fse->index)
-            continue;
+		if (index++ != fse->index)
+			continue;
 
-        fse->min_width  = mode->width;
-        fse->max_width  = mode->width;
-        fse->min_height = mode->height;
-        fse->max_height = mode->height;
-        return 0;
-    }
+		fse->min_width = mode->width;
+		fse->max_width = mode->width;
+		fse->min_height = mode->height;
+		fse->max_height = mode->height;
+		return 0;
+	}
 
-    return -EINVAL;
+	return -EINVAL;
 }
 
 static int sc910gs_set_pad_format(struct v4l2_subdev *sd,
-                 struct v4l2_subdev_state *sd_state,
-                 struct v4l2_subdev_format *fmt)
+				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_format *fmt)
 {
-    struct sc910gs *sc910gs = to_sc910gs(sd);
-    const struct sc910gs_mode *mode;
-    struct v4l2_mbus_framefmt *format;
-    struct v4l2_rect *crop;
+	struct sc910gs *sc910gs = to_sc910gs(sd);
+	const struct sc910gs_mode *mode;
+	struct v4l2_mbus_framefmt *format;
+	struct v4l2_rect *crop;
 
-    /* Normalize requested code to what we really support */
-    fmt->format.code = sc910gs_get_format_code(fmt->format.code);
+	/* Normalize requested code to what we really support */
+	fmt->format.code = sc910gs_get_format_code(fmt->format.code);
 
-    mode = sc910gs_find_mode(fmt->format.code, fmt->format.width,
-                 fmt->format.height);
+	mode = sc910gs_find_mode(fmt->format.code, fmt->format.width,
+				 fmt->format.height);
 
-    fmt->format.width        = mode->width;
-    fmt->format.height       = mode->height;
-    fmt->format.field        = V4L2_FIELD_NONE;
-    fmt->format.colorspace   = V4L2_COLORSPACE_RAW;
-    fmt->format.ycbcr_enc    = V4L2_YCBCR_ENC_601;
-    fmt->format.quantization = V4L2_QUANTIZATION_FULL_RANGE;
-    fmt->format.xfer_func    = V4L2_XFER_FUNC_NONE;
+	fmt->format.width = mode->width;
+	fmt->format.height = mode->height;
+	fmt->format.field = V4L2_FIELD_NONE;
+	fmt->format.colorspace = V4L2_COLORSPACE_RAW;
+	fmt->format.ycbcr_enc = V4L2_YCBCR_ENC_601;
+	fmt->format.quantization = V4L2_QUANTIZATION_FULL_RANGE;
+	fmt->format.xfer_func = V4L2_XFER_FUNC_NONE;
 
-    /* Update TRY/ACTIVE format kept by the framework */
-    format = v4l2_subdev_state_get_format(sd_state, 0);
-    *format = fmt->format;
+	/* Update TRY/ACTIVE format kept by the framework */
+	format = v4l2_subdev_state_get_format(sd_state, 0);
+	*format = fmt->format;
 
-    /* Keep the crop in sync with the selected mode */
-    crop = v4l2_subdev_state_get_crop(sd_state, 0);
-    *crop = mode->crop;
+	/* Keep the crop in sync with the selected mode */
+	crop = v4l2_subdev_state_get_crop(sd_state, 0);
+	*crop = mode->crop;
 
-    if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
-        sc910gs_update_ctrl_ranges(sc910gs, mode);
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+		sc910gs_update_ctrl_ranges(sc910gs, mode);
 
-    return 0;
+	return 0;
 }
-
-
 
 /* --------------------------------------------------------------------------
  * Stream on/off
@@ -789,114 +797,116 @@ static int sc910gs_set_pad_format(struct v4l2_subdev *sd,
  */
 
 static int sc910gs_enable_streams(struct v4l2_subdev *sd,
-                 struct v4l2_subdev_state *state, u32 pad,
-                 u64 streams_mask)
+				  struct v4l2_subdev_state *state, u32 pad,
+				  u64 streams_mask)
 {
-    struct sc910gs *sc910gs = to_sc910gs(sd);
-    const struct sc910gs_mode *mode;
-    struct v4l2_mbus_framefmt *fmt;
-    int ret = 0;
+	struct sc910gs *sc910gs = to_sc910gs(sd);
+	const struct sc910gs_mode *mode;
+	struct v4l2_mbus_framefmt *fmt;
+	int ret = 0;
 
-    if (pad || streams_mask != BIT_ULL(0))
-        return -EINVAL;
+	if (pad || streams_mask != BIT_ULL(0))
+		return -EINVAL;
 
-    if (sc910gs->streaming)
-        return -EBUSY;
+	if (sc910gs->streaming)
+		return -EBUSY;
 
-    fmt = v4l2_subdev_state_get_format(state, pad);
-    mode = sc910gs_find_mode(fmt->code, fmt->width, fmt->height);
-    if (!mode)
-        return -EINVAL;
+	fmt = v4l2_subdev_state_get_format(state, pad);
+	mode = sc910gs_find_mode(fmt->code, fmt->width, fmt->height);
+	if (!mode)
+		return -EINVAL;
 
-    ret = pm_runtime_resume_and_get(sc910gs->dev);
-    if (ret)
-        return ret;
+	ret = pm_runtime_resume_and_get(sc910gs->dev);
+	if (ret)
+		return ret;
 
-    /* Software reset, then program the sensor while in standby. */
-    cci_write(sc910gs->regmap, SC910GS_REG_RESET, 0x01, &ret);
-    cci_write(sc910gs->regmap, SC910GS_REG_MODE_SELECT, SC910GS_MODE_STANDBY, &ret);
-    if (ret)
-        goto err_rpm_put;
+	/* Software reset, then program the sensor while in standby. */
+	cci_write(sc910gs->regmap, SC910GS_REG_RESET, 0x01, &ret);
+	cci_write(sc910gs->regmap, SC910GS_REG_MODE_SELECT,
+		  SC910GS_MODE_STANDBY, &ret);
+	if (ret)
+		goto err_rpm_put;
 
-    ret = cci_multi_reg_write(sc910gs->regmap, mode_common_regs,
-                  ARRAY_SIZE(mode_common_regs), NULL);
-    if (ret) {
-        dev_err(sc910gs->dev, "Failed to write common settings\n");
-        goto err_rpm_put;
-    }
+	ret = cci_multi_reg_write(sc910gs->regmap, mode_common_regs,
+				  ARRAY_SIZE(mode_common_regs), NULL);
+	if (ret) {
+		dev_err(sc910gs->dev, "Failed to write common settings\n");
+		goto err_rpm_put;
+	}
 
-    if (mode->reg_list.num_of_regs) {
-        ret = cci_multi_reg_write(sc910gs->regmap, mode->reg_list.regs,
-                      mode->reg_list.num_of_regs, NULL);
-        if (ret) {
-            dev_err(sc910gs->dev, "Failed to write mode settings\n");
-            goto err_rpm_put;
-        }
-    }
+	if (mode->reg_list.num_of_regs) {
+		ret = cci_multi_reg_write(sc910gs->regmap, mode->reg_list.regs,
+					  mode->reg_list.num_of_regs, NULL);
+		if (ret) {
+			dev_err(sc910gs->dev,
+				"Failed to write mode settings\n");
+			goto err_rpm_put;
+		}
+	}
 
-    usleep_range(50000, 51000);
-    cci_write(sc910gs->regmap, CCI_REG8(0x331f), 0x12, &ret);
-    cci_write(sc910gs->regmap, CCI_REG8(0x3385), 0x1d, &ret);
-    usleep_range(50000, 51000);
-    cci_write(sc910gs->regmap, CCI_REG8(0x331f), 0x02, &ret);
-    cci_write(sc910gs->regmap, CCI_REG8(0x3385), 0x25, &ret);
-    if (ret)
-        goto err_rpm_put;
+	usleep_range(50000, 51000);
+	cci_write(sc910gs->regmap, CCI_REG8(0x331f), 0x12, &ret);
+	cci_write(sc910gs->regmap, CCI_REG8(0x3385), 0x1d, &ret);
+	usleep_range(50000, 51000);
+	cci_write(sc910gs->regmap, CCI_REG8(0x331f), 0x02, &ret);
+	cci_write(sc910gs->regmap, CCI_REG8(0x3385), 0x25, &ret);
+	if (ret)
+		goto err_rpm_put;
 
-    /* Apply user controls after writing the base tables */
-    ret = __v4l2_ctrl_handler_setup(sc910gs->sd.ctrl_handler);
-    if (ret) {
-        dev_err(sc910gs->dev, "Control handler setup failed\n");
-        goto err_rpm_put;
-    }
+	/* Apply user controls after writing the base tables */
+	ret = __v4l2_ctrl_handler_setup(sc910gs->sd.ctrl_handler);
+	if (ret) {
+		dev_err(sc910gs->dev, "Control handler setup failed\n");
+		goto err_rpm_put;
+	}
 
-    ret = cci_write(sc910gs->regmap, SC910GS_REG_MODE_SELECT,
-            SC910GS_MODE_STREAMING, NULL);
-    if (ret)
-        goto err_rpm_put;
+	ret = cci_write(sc910gs->regmap, SC910GS_REG_MODE_SELECT,
+			SC910GS_MODE_STREAMING, NULL);
+	if (ret)
+		goto err_rpm_put;
 
-    usleep_range(SC910GS_STREAM_DELAY_US,
-             SC910GS_STREAM_DELAY_US + SC910GS_STREAM_DELAY_RANGE_US);
+	usleep_range(SC910GS_STREAM_DELAY_US,
+		     SC910GS_STREAM_DELAY_US + SC910GS_STREAM_DELAY_RANGE_US);
 
-    /* vflip cannot change during streaming */
-    __v4l2_ctrl_grab(sc910gs->vflip, true);
-    __v4l2_ctrl_grab(sc910gs->hflip, true);
-    sc910gs->streaming = true;
+	/* vflip cannot change during streaming */
+	__v4l2_ctrl_grab(sc910gs->vflip, true);
+	__v4l2_ctrl_grab(sc910gs->hflip, true);
+	sc910gs->streaming = true;
 
-    return 0;
+	return 0;
 
 err_rpm_put:
-    cci_write(sc910gs->regmap, SC910GS_REG_MODE_SELECT,
-          SC910GS_MODE_STANDBY, NULL);
-    pm_runtime_mark_last_busy(sc910gs->dev);
-    pm_runtime_put_autosuspend(sc910gs->dev);
-    return ret;
+	cci_write(sc910gs->regmap, SC910GS_REG_MODE_SELECT,
+		  SC910GS_MODE_STANDBY, NULL);
+	pm_runtime_mark_last_busy(sc910gs->dev);
+	pm_runtime_put_autosuspend(sc910gs->dev);
+	return ret;
 }
 
 static int sc910gs_disable_streams(struct v4l2_subdev *sd,
-                  struct v4l2_subdev_state *state, u32 pad,
-                  u64 streams_mask)
+				   struct v4l2_subdev_state *state, u32 pad,
+				   u64 streams_mask)
 {
-    struct sc910gs *sc910gs = to_sc910gs(sd);
-    int ret = 0;
+	struct sc910gs *sc910gs = to_sc910gs(sd);
+	int ret = 0;
 
-    if (pad || streams_mask != BIT_ULL(0))
-        return -EINVAL;
+	if (pad || streams_mask != BIT_ULL(0))
+		return -EINVAL;
 
-    if (!sc910gs->streaming)
-        return 0;
+	if (!sc910gs->streaming)
+		return 0;
 
-    __v4l2_ctrl_grab(sc910gs->vflip, false);
-    __v4l2_ctrl_grab(sc910gs->hflip, false);
+	__v4l2_ctrl_grab(sc910gs->vflip, false);
+	__v4l2_ctrl_grab(sc910gs->hflip, false);
 
-    cci_write(sc910gs->regmap, SC910GS_REG_MODE_SELECT,
-          SC910GS_MODE_STANDBY, &ret);
-    sc910gs->streaming = false;
+	cci_write(sc910gs->regmap, SC910GS_REG_MODE_SELECT,
+		  SC910GS_MODE_STANDBY, &ret);
+	sc910gs->streaming = false;
 
-    pm_runtime_mark_last_busy(sc910gs->dev);
-    pm_runtime_put_autosuspend(sc910gs->dev);
+	pm_runtime_mark_last_busy(sc910gs->dev);
+	pm_runtime_put_autosuspend(sc910gs->dev);
 
-    return ret;
+	return ret;
 }
 
 /* --------------------------------------------------------------------------
@@ -906,51 +916,51 @@ static int sc910gs_disable_streams(struct v4l2_subdev *sd,
 
 static int sc910gs_power_on(struct device *dev)
 {
-    struct v4l2_subdev *sd = dev_get_drvdata(dev);
-    struct sc910gs *sc910gs = to_sc910gs(sd);
-    int ret = 0;
+	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+	struct sc910gs *sc910gs = to_sc910gs(sd);
+	int ret = 0;
 
-    ret = regulator_bulk_enable(SC910GS_NUM_SUPPLIES, sc910gs->supplies);
-    if (ret) {
-        dev_err(sc910gs->dev, "Failed to enable regulators\n");
-        return ret;
-    }
+	ret = regulator_bulk_enable(SC910GS_NUM_SUPPLIES, sc910gs->supplies);
+	if (ret) {
+		dev_err(sc910gs->dev, "Failed to enable regulators\n");
+		return ret;
+	}
 
-    ret = clk_prepare_enable(sc910gs->xclk);
-    if (ret) {
-        dev_err(sc910gs->dev, "Failed to enable clock\n");
-        goto reg_off;
-    }
+	ret = clk_prepare_enable(sc910gs->xclk);
+	if (ret) {
+		dev_err(sc910gs->dev, "Failed to enable clock\n");
+		goto reg_off;
+	}
 
-    gpiod_set_value_cansleep(sc910gs->reset_gpio, SC910GS_XCLR_DEASSERTED);
+	gpiod_set_value_cansleep(sc910gs->reset_gpio, SC910GS_XCLR_DEASSERTED);
 
-    usleep_range(SC910GS_XCLR_MIN_DELAY_US,
-             SC910GS_XCLR_MIN_DELAY_US + SC910GS_XCLR_DELAY_RANGE_US);
+	usleep_range(SC910GS_XCLR_MIN_DELAY_US,
+		     SC910GS_XCLR_MIN_DELAY_US + SC910GS_XCLR_DELAY_RANGE_US);
 
-    /* Software reset */
-    cci_write(sc910gs->regmap, SC910GS_REG_RESET, 0x01, &ret);
-    if (ret)
-        goto clk_off;
+	/* Software reset */
+	cci_write(sc910gs->regmap, SC910GS_REG_RESET, 0x01, &ret);
+	if (ret)
+		goto clk_off;
 
-    return 0;
+	return 0;
 
 clk_off:
-    clk_disable_unprepare(sc910gs->xclk);
+	clk_disable_unprepare(sc910gs->xclk);
 reg_off:
-    regulator_bulk_disable(SC910GS_NUM_SUPPLIES, sc910gs->supplies);
-    return ret;
+	regulator_bulk_disable(SC910GS_NUM_SUPPLIES, sc910gs->supplies);
+	return ret;
 }
 
 static int sc910gs_power_off(struct device *dev)
 {
-    struct v4l2_subdev *sd = dev_get_drvdata(dev);
-    struct sc910gs *sc910gs = to_sc910gs(sd);
+	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+	struct sc910gs *sc910gs = to_sc910gs(sd);
 
-    gpiod_set_value_cansleep(sc910gs->reset_gpio, SC910GS_XCLR_ASSERTED);
-    regulator_bulk_disable(SC910GS_NUM_SUPPLIES, sc910gs->supplies);
-    clk_disable_unprepare(sc910gs->xclk);
+	gpiod_set_value_cansleep(sc910gs->reset_gpio, SC910GS_XCLR_ASSERTED);
+	regulator_bulk_disable(SC910GS_NUM_SUPPLIES, sc910gs->supplies);
+	clk_disable_unprepare(sc910gs->xclk);
 
-    return 0;
+	return 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -959,58 +969,57 @@ static int sc910gs_power_off(struct device *dev)
  */
 
 static int sc910gs_get_selection(struct v4l2_subdev *sd,
-                struct v4l2_subdev_state *sd_state,
-                struct v4l2_subdev_selection *sel)
+				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_selection *sel)
 {
-    switch (sel->target) {
+	switch (sel->target) {
 
+	case V4L2_SEL_TGT_NATIVE_SIZE:
+		sel->r.left = 0;
+		sel->r.top = 0;
+		sel->r.width = SC910GS_NATIVE_WIDTH;	/* pixel array (no blanking) */
+		sel->r.height = SC910GS_NATIVE_HEIGHT;
+		return 0;
+	case V4L2_SEL_TGT_CROP_BOUNDS:
+		sel->r.top = SC910GS_PIXEL_ARRAY_TOP;
+		sel->r.left = SC910GS_PIXEL_ARRAY_LEFT;
+		sel->r.width = SC910GS_PIXEL_ARRAY_WIDTH;
+		sel->r.height = SC910GS_PIXEL_ARRAY_HEIGHT;
+		return 0;
 
-    case V4L2_SEL_TGT_NATIVE_SIZE:
-        sel->r.left   = 0;
-        sel->r.top    = 0;
-        sel->r.width  = SC910GS_NATIVE_WIDTH;   /* pixel array (no blanking) */
-        sel->r.height = SC910GS_NATIVE_HEIGHT;
-        return 0;
-    case V4L2_SEL_TGT_CROP_BOUNDS:
-        sel->r.top = SC910GS_PIXEL_ARRAY_TOP;
-        sel->r.left = SC910GS_PIXEL_ARRAY_LEFT;
-        sel->r.width = SC910GS_PIXEL_ARRAY_WIDTH;
-        sel->r.height = SC910GS_PIXEL_ARRAY_HEIGHT;
-        return 0;
+	case V4L2_SEL_TGT_CROP_DEFAULT:
+		sel->r = supported_modes[0].crop;
+		return 0;
 
-    case V4L2_SEL_TGT_CROP_DEFAULT:
-        sel->r = supported_modes[0].crop;
-        return 0;
+	case V4L2_SEL_TGT_CROP:
+		sel->r = *v4l2_subdev_state_get_crop(sd_state, 0);
+		return 0;
 
-    case V4L2_SEL_TGT_CROP:
-        sel->r = *v4l2_subdev_state_get_crop(sd_state, 0);
-        return 0;
-
-    default:
-        return -EINVAL;
-    }
+	default:
+		return -EINVAL;
+	}
 }
 
 static int sc910gs_init_state(struct v4l2_subdev *sd,
-                 struct v4l2_subdev_state *state)
+			      struct v4l2_subdev_state *state)
 {
-    struct v4l2_rect *crop;
-    struct v4l2_subdev_format fmt = {
-        .which  = V4L2_SUBDEV_FORMAT_TRY,
-        .pad    = 0,
-        .format = {
-            .code   = MEDIA_BUS_FMT_SBGGR12_1X12,
-            .width  = SC910GS_MODE_WIDTH,
-            .height = SC910GS_MODE_HEIGHT,
-        },
-    };
+	struct v4l2_rect *crop;
+	struct v4l2_subdev_format fmt = {
+		.which = V4L2_SUBDEV_FORMAT_TRY,
+		.pad = 0,
+		.format = {
+			   .code = MEDIA_BUS_FMT_SBGGR12_1X12,
+			   .width = SC910GS_MODE_WIDTH,
+			   .height = SC910GS_MODE_HEIGHT,
+			    },
+	};
 
-    sc910gs_set_pad_format(sd, state, &fmt);
+	sc910gs_set_pad_format(sd, state, &fmt);
 
-    crop = v4l2_subdev_state_get_crop(state, 0);
-    *crop = supported_modes[0].crop;
+	crop = v4l2_subdev_state_get_crop(state, 0);
+	*crop = supported_modes[0].crop;
 
-    return 0;
+	return 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -1019,32 +1028,32 @@ static int sc910gs_init_state(struct v4l2_subdev *sd,
  */
 
 static const struct v4l2_subdev_video_ops sc910gs_video_ops = {
-    .s_stream = v4l2_subdev_s_stream_helper,
+	.s_stream = v4l2_subdev_s_stream_helper,
 };
 
 static const struct v4l2_subdev_pad_ops sc910gs_pad_ops = {
-    .enum_mbus_code = sc910gs_enum_mbus_code,
-    .get_fmt        = v4l2_subdev_get_fmt,
-    .set_fmt        = sc910gs_set_pad_format,
-    .get_selection  = sc910gs_get_selection,
-    .enum_frame_size = sc910gs_enum_frame_size,
-    .enable_streams  = sc910gs_enable_streams,
-    .disable_streams = sc910gs_disable_streams,
+	.enum_mbus_code = sc910gs_enum_mbus_code,
+	.get_fmt = v4l2_subdev_get_fmt,
+	.set_fmt = sc910gs_set_pad_format,
+	.get_selection = sc910gs_get_selection,
+	.enum_frame_size = sc910gs_enum_frame_size,
+	.enable_streams = sc910gs_enable_streams,
+	.disable_streams = sc910gs_disable_streams,
 };
 
 static const struct v4l2_subdev_internal_ops sc910gs_internal_ops = {
-    .init_state = sc910gs_init_state,
+	.init_state = sc910gs_init_state,
 };
 
 static const struct v4l2_subdev_core_ops sc910gs_core_ops = {
-    .subscribe_event = v4l2_ctrl_subdev_subscribe_event,
-    .unsubscribe_event = v4l2_event_subdev_unsubscribe,
+	.subscribe_event = v4l2_ctrl_subdev_subscribe_event,
+	.unsubscribe_event = v4l2_event_subdev_unsubscribe,
 };
 
 static const struct v4l2_subdev_ops sc910gs_subdev_ops = {
-    .core  = &sc910gs_core_ops,
-    .video = &sc910gs_video_ops,
-    .pad   = &sc910gs_pad_ops,
+	.core = &sc910gs_core_ops,
+	.video = &sc910gs_video_ops,
+	.pad = &sc910gs_pad_ops,
 };
 
 /* --------------------------------------------------------------------------
@@ -1052,226 +1061,233 @@ static const struct v4l2_subdev_ops sc910gs_subdev_ops = {
  * --------------------------------------------------------------------------
  */
 
-static int sc910gs_check_hwcfg(struct device *dev, struct sc910gs *sc910gs)
+static int sc910gs_check_hwcfg(struct device *dev)
 {
-    struct fwnode_handle *endpoint;
-    struct v4l2_fwnode_endpoint ep = {
-        .bus_type = V4L2_MBUS_CSI2_DPHY,
-    };
-    bool link_freq_found = false;
-    unsigned int i;
-    int ret = -EINVAL;
+	struct fwnode_handle *endpoint;
+	struct v4l2_fwnode_endpoint ep = {
+		.bus_type = V4L2_MBUS_CSI2_DPHY,
+	};
+	bool link_freq_found = false;
+	unsigned int i;
+	int ret = -EINVAL;
 
-    endpoint = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
-    if (!endpoint) {
-        dev_err(dev, "endpoint node not found\n");
-        return -EINVAL;
-    }
+	endpoint = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
+	if (!endpoint) {
+		dev_err(dev, "endpoint node not found\n");
+		return -EINVAL;
+	}
 
-    ret = v4l2_fwnode_endpoint_alloc_parse(endpoint, &ep);
-    if (ret) {
-        dev_err(dev, "could not parse endpoint\n");
-        goto out_put;
-    }
+	ret = v4l2_fwnode_endpoint_alloc_parse(endpoint, &ep);
+	if (ret) {
+		dev_err(dev, "could not parse endpoint\n");
+		goto out_put;
+	}
 
-    if (ep.bus.mipi_csi2.num_data_lanes != 4) {
-        dev_err(dev, "only 4 data lanes supported\n");
-        goto out_free;
-    }
+	if (ep.bus.mipi_csi2.num_data_lanes != 4) {
+		dev_err(dev, "only 4 data lanes supported\n");
+		goto out_free;
+	}
 
-    for (i = 0; i < ep.nr_of_link_frequencies; i++) {
-        if (ep.link_frequencies[i] == SC910GS_LINK_FREQ) {
-            link_freq_found = true;
-            break;
-        }
-    }
+	for (i = 0; i < ep.nr_of_link_frequencies; i++) {
+		if (ep.link_frequencies[i] == SC910GS_LINK_FREQ) {
+			link_freq_found = true;
+			break;
+		}
+	}
 
-    if (!link_freq_found) {
-        dev_err(dev, "link frequency %u Hz not found in endpoint\n",
-            SC910GS_LINK_FREQ);
-        goto out_free;
-    }
+	if (!link_freq_found) {
+		dev_err(dev, "link frequency %u Hz not found in endpoint\n",
+			SC910GS_LINK_FREQ);
+		goto out_free;
+	}
 
-    ret = 0;
+	ret = 0;
 
 out_free:
-    v4l2_fwnode_endpoint_free(&ep);
+	v4l2_fwnode_endpoint_free(&ep);
 out_put:
-    fwnode_handle_put(endpoint);
-    return ret;
+	fwnode_handle_put(endpoint);
+	return ret;
 }
 
 static int sc910gs_get_regulators(struct sc910gs *sc910gs)
 {
-    unsigned int i;
+	unsigned int i;
 
-    for (i = 0; i < SC910GS_NUM_SUPPLIES; i++)
-        sc910gs->supplies[i].supply = sc910gs_supply_name[i];
+	for (i = 0; i < SC910GS_NUM_SUPPLIES; i++)
+		sc910gs->supplies[i].supply = sc910gs_supply_name[i];
 
-    return devm_regulator_bulk_get(sc910gs->dev,
-                       SC910GS_NUM_SUPPLIES, sc910gs->supplies);
+	return devm_regulator_bulk_get(sc910gs->dev,
+				       SC910GS_NUM_SUPPLIES, sc910gs->supplies);
 }
 
 static int sc910gs_check_module_exists(struct sc910gs *sc910gs)
 {
-    int ret;
-    u64 val;
+	int ret;
+	u64 val;
 
-    /* No chip-id register; read a known register as a presence test */
-    ret = cci_read(sc910gs->regmap, SC910GS_REG_ID, &val, NULL);
-    if (ret) {
-        dev_err(sc910gs->dev, "register read failed (%d)\n", ret);
-        return ret;
-    }
-    if (val != SC910GS_ID) {
-        dev_err(sc910gs->dev, "ID mismatch, expected %x, actual %llx\n", SC910GS_ID, val);
-        return 1;
-    }
+	/* Read the sensor chip ID as a presence test. */
+	ret = cci_read(sc910gs->regmap, SC910GS_REG_ID, &val, NULL);
+	if (ret) {
+		dev_err(sc910gs->dev, "register read failed (%d)\n", ret);
+		return ret;
+	}
+	if (val != SC910GS_ID) {
+		dev_err(sc910gs->dev, "ID mismatch, expected %x, actual %llx\n",
+			SC910GS_ID, val);
+		return -ENODEV;
+	}
 
-    dev_info(sc910gs->dev, "Sensor detected\n");
-    return 0;
+	dev_info(sc910gs->dev, "Sensor detected\n");
+	return 0;
 }
 
 static int sc910gs_probe(struct i2c_client *client)
 {
-    struct device *dev = &client->dev;
-    struct sc910gs *sc910gs;
-    unsigned int xclk_freq;
-    int ret;
+	struct device *dev = &client->dev;
+	struct sc910gs *sc910gs;
+	unsigned long xclk_freq;
+	int ret;
 
-    sc910gs = devm_kzalloc(dev, sizeof(*sc910gs), GFP_KERNEL);
-    if (!sc910gs)
-        return -ENOMEM;
+	sc910gs = devm_kzalloc(dev, sizeof(*sc910gs), GFP_KERNEL);
+	if (!sc910gs)
+		return -ENOMEM;
 
-    v4l2_i2c_subdev_init(&sc910gs->sd, client, &sc910gs_subdev_ops);
-    sc910gs->dev = dev;
+	v4l2_i2c_subdev_init(&sc910gs->sd, client, &sc910gs_subdev_ops);
+	sc910gs->dev = dev;
 
-    ret = sc910gs_check_hwcfg(dev, sc910gs);
-    if (ret)
-        return ret;
+	ret = sc910gs_check_hwcfg(dev);
+	if (ret)
+		return ret;
 
-    sc910gs->regmap = devm_cci_regmap_init_i2c(client, 16);
-    if (IS_ERR(sc910gs->regmap))
-        return dev_err_probe(dev, PTR_ERR(sc910gs->regmap), "CCI init failed\n");
+	sc910gs->regmap = devm_cci_regmap_init_i2c(client, 16);
+	if (IS_ERR(sc910gs->regmap))
+		return dev_err_probe(dev, PTR_ERR(sc910gs->regmap),
+				     "CCI init failed\n");
 
-    sc910gs->xclk = devm_clk_get(dev, NULL);
-    if (IS_ERR(sc910gs->xclk))
-        return dev_err_probe(dev, PTR_ERR(sc910gs->xclk), "xclk missing\n");
+	sc910gs->xclk = devm_clk_get(dev, NULL);
+	if (IS_ERR(sc910gs->xclk))
+		return dev_err_probe(dev, PTR_ERR(sc910gs->xclk),
+				     "xclk missing\n");
 
-    xclk_freq = clk_get_rate(sc910gs->xclk);
-    if (xclk_freq < SC910GS_XCLK_MIN || xclk_freq > SC910GS_XCLK_MAX)
-        return dev_err_probe(dev, -EINVAL,
-                     "xclk frequency %u Hz out of range\n",
-                     xclk_freq);
+	xclk_freq = clk_get_rate(sc910gs->xclk);
+	if (xclk_freq != SC910GS_XCLK_FREQ)
+		return dev_err_probe(dev, -EINVAL,
+				     "unsupported xclk frequency %lu Hz\n",
+				     xclk_freq);
 
-    ret = sc910gs_get_regulators(sc910gs);
-    if (ret)
-        return dev_err_probe(dev, ret, "regulators\n");
+	ret = sc910gs_get_regulators(sc910gs);
+	if (ret)
+		return dev_err_probe(dev, ret, "regulators\n");
 
-    sc910gs->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
-    if (IS_ERR(sc910gs->reset_gpio))
-        return dev_err_probe(dev, PTR_ERR(sc910gs->reset_gpio),
-                     "failed to get reset GPIO\n");
+	sc910gs->reset_gpio =
+	    devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+	if (IS_ERR(sc910gs->reset_gpio))
+		return dev_err_probe(dev, PTR_ERR(sc910gs->reset_gpio),
+				     "failed to get reset GPIO\n");
 
-    /* Power on to probe the device */
-    ret = sc910gs_power_on(dev);
-    if (ret)
-        return ret;
+	/* Power on to probe the device */
+	ret = sc910gs_power_on(dev);
+	if (ret)
+		return ret;
 
-    ret = sc910gs_check_module_exists(sc910gs);
-    if (ret)
-        goto err_power_off;
+	ret = sc910gs_check_module_exists(sc910gs);
+	if (ret)
+		goto err_power_off;
 
-    pm_runtime_set_active(dev);
-    pm_runtime_get_noresume(dev);
-    pm_runtime_enable(dev);
-    pm_runtime_set_autosuspend_delay(dev, 1000);
-    pm_runtime_use_autosuspend(dev);
+	pm_runtime_set_active(dev);
+	pm_runtime_get_noresume(dev);
+	pm_runtime_enable(dev);
+	pm_runtime_set_autosuspend_delay(dev, 1000);
+	pm_runtime_use_autosuspend(dev);
 
-    ret = sc910gs_init_controls(sc910gs);
-    if (ret)
-        goto err_pm;
+	ret = sc910gs_init_controls(sc910gs);
+	if (ret)
+		goto err_pm;
 
-    sc910gs->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE |
-                  V4L2_SUBDEV_FL_HAS_EVENTS;
-    sc910gs->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
-    sc910gs->sd.internal_ops = &sc910gs_internal_ops;
+	sc910gs->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE |
+	    V4L2_SUBDEV_FL_HAS_EVENTS;
+	sc910gs->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
+	sc910gs->sd.internal_ops = &sc910gs_internal_ops;
 
-    sc910gs->pad.flags = MEDIA_PAD_FL_SOURCE;
+	sc910gs->pad.flags = MEDIA_PAD_FL_SOURCE;
 
-    ret = media_entity_pads_init(&sc910gs->sd.entity, 1, &sc910gs->pad);
-    if (ret) {
-        dev_err(dev, "entity pads init failed: %d\n", ret);
-        goto err_ctrls;
-    }
+	ret = media_entity_pads_init(&sc910gs->sd.entity, 1, &sc910gs->pad);
+	if (ret) {
+		dev_err(dev, "entity pads init failed: %d\n", ret);
+		goto err_ctrls;
+	}
 
-    sc910gs->sd.state_lock = sc910gs->ctrl_handler.lock;
-    ret = v4l2_subdev_init_finalize(&sc910gs->sd);
-    if (ret) {
-        dev_err_probe(dev, ret, "subdev init\n");
-        goto err_entity;
-    }
+	sc910gs->sd.state_lock = sc910gs->ctrl_handler.lock;
+	ret = v4l2_subdev_init_finalize(&sc910gs->sd);
+	if (ret) {
+		dev_err_probe(dev, ret, "subdev init\n");
+		goto err_entity;
+	}
 
-    ret = v4l2_async_register_subdev_sensor(&sc910gs->sd);
-    if (ret) {
-        dev_err(dev, "sensor subdev register failed: %d\n", ret);
-        goto err_subdev;
-    }
+	ret = v4l2_async_register_subdev_sensor(&sc910gs->sd);
+	if (ret) {
+		dev_err(dev, "sensor subdev register failed: %d\n", ret);
+		goto err_subdev;
+	}
 
-    pm_runtime_mark_last_busy(dev);
-    pm_runtime_put_autosuspend(dev);
-    return 0;
+	pm_runtime_mark_last_busy(dev);
+	pm_runtime_put_autosuspend(dev);
+	return 0;
 
 err_subdev:
-    v4l2_subdev_cleanup(&sc910gs->sd);
+	v4l2_subdev_cleanup(&sc910gs->sd);
 err_entity:
-    media_entity_cleanup(&sc910gs->sd.entity);
+	media_entity_cleanup(&sc910gs->sd.entity);
 err_ctrls:
-    sc910gs_free_controls(sc910gs);
+	sc910gs_free_controls(sc910gs);
 err_pm:
-    pm_runtime_disable(dev);
-    pm_runtime_set_suspended(dev);
+	pm_runtime_disable(dev);
+	pm_runtime_put_noidle(dev);
+	pm_runtime_set_suspended(dev);
 err_power_off:
-    sc910gs_power_off(dev);
-    return ret;
+	sc910gs_power_off(dev);
+	return ret;
 }
 
 static void sc910gs_remove(struct i2c_client *client)
 {
-    struct v4l2_subdev *sd = i2c_get_clientdata(client);
-    struct sc910gs *sc910gs = to_sc910gs(sd);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct sc910gs *sc910gs = to_sc910gs(sd);
 
-    v4l2_async_unregister_subdev(sd);
-    v4l2_subdev_cleanup(sd);
-    media_entity_cleanup(&sd->entity);
-    sc910gs_free_controls(sc910gs);
+	v4l2_async_unregister_subdev(sd);
+	v4l2_subdev_cleanup(sd);
+	media_entity_cleanup(&sd->entity);
+	sc910gs_free_controls(sc910gs);
 
-    pm_runtime_disable(sc910gs->dev);
-    if (!pm_runtime_status_suspended(sc910gs->dev))
-        sc910gs_power_off(sc910gs->dev);
-    pm_runtime_set_suspended(sc910gs->dev);
+	pm_runtime_disable(sc910gs->dev);
+	if (!pm_runtime_status_suspended(sc910gs->dev))
+		sc910gs_power_off(sc910gs->dev);
+	pm_runtime_set_suspended(sc910gs->dev);
 }
 
 static DEFINE_RUNTIME_DEV_PM_OPS(sc910gs_pm_ops, sc910gs_power_off,
-                 sc910gs_power_on, NULL);
+				 sc910gs_power_on, NULL);
 
 static const struct of_device_id sc910gs_of_match[] = {
-    { .compatible = "smartsens,sc910gs" },
-    { /* sentinel */ }
+	{.compatible = "smartsens,sc910gs" },
+	{ /* sentinel */  }
 };
+
 MODULE_DEVICE_TABLE(of, sc910gs_of_match);
 
 static struct i2c_driver sc910gs_i2c_driver = {
-    .driver = {
-        .name  = "sc910gs",
-        .pm    = pm_ptr(&sc910gs_pm_ops),
-        .of_match_table = sc910gs_of_match,
-    },
-    .probe  = sc910gs_probe,
-    .remove = sc910gs_remove,
+	.driver = {
+		   .name = "sc910gs",
+		   .pm = pm_ptr(&sc910gs_pm_ops),
+		   .of_match_table = sc910gs_of_match,
+		    },
+	.probe = sc910gs_probe,
+	.remove = sc910gs_remove,
 };
+
 module_i2c_driver(sc910gs_i2c_driver);
 
 MODULE_AUTHOR("Will Whang <will@willwhang.com>");
-MODULE_DESCRIPTION("SmartSense SC910GS sensor driver");
+MODULE_DESCRIPTION("SmartSens SC910GS sensor driver");
 MODULE_LICENSE("GPL");

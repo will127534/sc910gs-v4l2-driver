@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// Definitions for IMX294 camera module on VC I2C bus
+// Definitions for SC910GS camera module on VC I2C bus
 /dts-v1/;
 /plugin/;
 /{
@@ -15,7 +15,7 @@
 	clk_frag: fragment@1 {
 		target = <&cam1_clk>;
 		cam_clk: __overlay__ {
-			clock-frequency = <40000000>;
+			clock-frequency = <27000000>;
 			status = "okay";
 		};
 	};
