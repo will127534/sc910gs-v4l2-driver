@@ -45,8 +45,10 @@
 #define SC910GS_EXPOSURE_TO_REG(exposure) ((exposure) / 2)
 
 
-#define SC910GS_REG_VMAX           CCI_REG16(0x320e) //Technicall not called VMAX but I'm used to that naming
-#define SC910GS_VMAX_DEFAULT       2500
+#define SC910GS_REG_VMAX           CCI_REG16(0x320e) //Technically not called VMAX but I'm used to that naming
+#define SC910GS_VMAX_12BIT         2500
+/* The 2168-line theoretical RAW10 limit drops frames on this link row. */
+#define SC910GS_VMAX_10BIT         2273
 
 
 #define SC910GS_REG_ID             CCI_REG16(0x3107)
@@ -81,7 +83,7 @@
 #define SC910GS_HFLIP_MASK          GENMASK(2, 1)
 #define SC910GS_VFLIP_MASK          GENMASK(7, 5)
 
-/* Pixel rate used by the V4L2 frame-duration model for this 30 fps mode. */
+/* Pixel rate used by the V4L2 frame-duration model for the verified PLL row. */
 #define SC910GS_PIXEL_RATE              288000000U
 #define SC910GS_LINK_FREQ               495000000U
 
@@ -90,6 +92,11 @@
 
 static const s64 sc910gs_link_freq_menu[] = {
     SC910GS_LINK_FREQ,
+};
+
+static const u32 sc910gs_mbus_codes[] = {
+    MEDIA_BUS_FMT_SBGGR12_1X12,
+    MEDIA_BUS_FMT_SBGGR10_1X10,
 };
 
 
@@ -251,11 +258,26 @@ static const struct cci_reg_sequence mode_common_regs[] = {
 	{CCI_REG8(0x59ff),0x04},
 };
 
+static const struct cci_reg_sequence mode_3840x2160_12bit_regs[] = {
+    {CCI_REG8(0x3031), 0x0c},
+    {SC910GS_REG_VMAX, SC910GS_VMAX_12BIT},
+};
+
+static const struct cci_reg_sequence mode_3840x2160_10bit_regs[] = {
+    {CCI_REG8(0x3031), 0x0a},
+    {SC910GS_REG_VMAX, SC910GS_VMAX_10BIT},
+};
+
 
 /* Mode description */
 struct sc910gs_mode {
+    u32 code;
     unsigned int width;
     unsigned int height;
+    u32 vmax_def;
+    u32 vblank_min;
+    u32 pixel_rate;
+    u32 link_freq_index;
     struct v4l2_rect crop;
     struct {
         unsigned int num_of_regs;
@@ -263,15 +285,43 @@ struct sc910gs_mode {
     } reg_list;
 };
 
-static struct sc910gs_mode supported_modes_12bit[] = {
+static const struct sc910gs_mode supported_modes[] = {
     {
+        .code = MEDIA_BUS_FMT_SBGGR12_1X12,
         .width = SC910GS_MODE_WIDTH,
         .height = SC910GS_MODE_HEIGHT,
+        .vmax_def = SC910GS_VMAX_12BIT,
+        .vblank_min = SC910GS_VMAX_12BIT - SC910GS_MODE_HEIGHT,
+        .pixel_rate = SC910GS_PIXEL_RATE,
+        .link_freq_index = 0,
         .crop = {
             .left = SC910GS_MODE_CROP_LEFT,
             .top = SC910GS_MODE_CROP_TOP,
             .width = SC910GS_MODE_WIDTH,
             .height = SC910GS_MODE_HEIGHT,
+        },
+        .reg_list = {
+            .num_of_regs = ARRAY_SIZE(mode_3840x2160_12bit_regs),
+            .regs = mode_3840x2160_12bit_regs,
+        },
+    },
+    {
+        .code = MEDIA_BUS_FMT_SBGGR10_1X10,
+        .width = SC910GS_MODE_WIDTH,
+        .height = SC910GS_MODE_HEIGHT,
+        .vmax_def = SC910GS_VMAX_10BIT,
+        .vblank_min = SC910GS_VMAX_10BIT - SC910GS_MODE_HEIGHT,
+        .pixel_rate = SC910GS_PIXEL_RATE,
+        .link_freq_index = 0,
+        .crop = {
+            .left = SC910GS_MODE_CROP_LEFT,
+            .top = SC910GS_MODE_CROP_TOP,
+            .width = SC910GS_MODE_WIDTH,
+            .height = SC910GS_MODE_HEIGHT,
+        },
+        .reg_list = {
+            .num_of_regs = ARRAY_SIZE(mode_3840x2160_10bit_regs),
+            .regs = mode_3840x2160_10bit_regs,
         },
     },
 };
@@ -331,32 +381,72 @@ static inline struct sc910gs *to_sc910gs(struct v4l2_subdev *sd)
     return container_of(sd, struct sc910gs, sd);
 }
 
-static inline void get_mode_table(struct sc910gs *sc910gs, unsigned int code,
-                  const struct sc910gs_mode **mode_list,
-                  unsigned int *num_modes)
+static bool sc910gs_is_format_code_supported(u32 code)
 {
-    switch (code) {
-    case MEDIA_BUS_FMT_SRGGB12_1X12:
-    case MEDIA_BUS_FMT_SGRBG12_1X12:
-    case MEDIA_BUS_FMT_SGBRG12_1X12:
-    case MEDIA_BUS_FMT_SBGGR12_1X12:
-        *mode_list = supported_modes_12bit;
-        *num_modes = ARRAY_SIZE(supported_modes_12bit);
-        break;
-    default:
-        *mode_list = NULL;
-        *num_modes = 0;
-    }
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(sc910gs_mbus_codes); i++)
+        if (sc910gs_mbus_codes[i] == code)
+            return true;
+
+    return false;
 }
 
-static u32 sc910gs_get_format_code(struct sc910gs *sc910gs, u32 code)
+static u32 sc910gs_get_format_code(u32 code)
 {
     /*
      * SC910GS mirror/flip changes readout direction, but the output Bayer
      * phase remains the same. Reporting transformed Bayer orders makes the
      * ISP demosaic single-axis flips with the wrong colour channels.
      */
+    if (sc910gs_is_format_code_supported(code))
+        return code;
+
     return MEDIA_BUS_FMT_SBGGR12_1X12;
+}
+
+static const struct sc910gs_mode *sc910gs_find_mode(u32 code, u32 width,
+                            u32 height)
+{
+    const struct sc910gs_mode *best = NULL;
+    unsigned int i;
+    u32 best_delta = U32_MAX;
+
+    code = sc910gs_get_format_code(code);
+
+    for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+        const struct sc910gs_mode *mode = &supported_modes[i];
+        u32 delta;
+
+        if (mode->code != code)
+            continue;
+
+        delta = abs((s32)mode->width - (s32)width) +
+            abs((s32)mode->height - (s32)height);
+        if (!best || delta < best_delta) {
+            best = mode;
+            best_delta = delta;
+        }
+    }
+
+    return best ? best : &supported_modes[0];
+}
+
+static void sc910gs_update_ctrl_ranges(struct sc910gs *sc910gs,
+                       const struct sc910gs_mode *mode)
+{
+    u32 vblank_def = mode->vmax_def - mode->height;
+    u32 vblank_max = 0xffff - mode->height;
+    u32 exposure_max = SC910GS_EXPOSURE_MAX(mode->vmax_def);
+
+    __v4l2_ctrl_s_ctrl_int64(sc910gs->pixel_rate, mode->pixel_rate);
+    __v4l2_ctrl_s_ctrl(sc910gs->link_freq, mode->link_freq_index);
+    __v4l2_ctrl_modify_range(sc910gs->vblank, mode->vblank_min,
+                 vblank_max, 1, vblank_def);
+    __v4l2_ctrl_s_ctrl(sc910gs->vblank, vblank_def);
+    __v4l2_ctrl_modify_range(sc910gs->exposure, SC910GS_EXPOSURE_MIN,
+                 exposure_max, SC910GS_EXPOSURE_STEP,
+                 min_t(u32, SC910GS_EXPOSURE_DEFAULT, exposure_max));
 }
 
 static inline void sc910gs_gain_idx_to_regs(u16 idx, u8 *ana_gain, u8 *ana_fine)
@@ -409,20 +499,16 @@ static inline void sc910gs_gain_idx_to_regs(u16 idx, u8 *ana_gain, u8 *ana_fine)
 static int sc910gs_set_ctrl(struct v4l2_ctrl *ctrl)
 {
     struct sc910gs *sc910gs = container_of(ctrl->handler, struct sc910gs, ctrl_handler);
-    const struct sc910gs_mode *mode, *mode_list;
+    const struct sc910gs_mode *mode;
     struct v4l2_subdev_state *state;
     struct v4l2_mbus_framefmt *fmt;
-    unsigned int num_modes;
     int pm_ret, ret = 0;
     u32 vmax, exposure_max;
 
 
     state = v4l2_subdev_get_locked_active_state(&sc910gs->sd);
     fmt = v4l2_subdev_state_get_format(state, 0);
-
-    get_mode_table(sc910gs, fmt->code, &mode_list, &num_modes);
-    mode = v4l2_find_nearest_size(mode_list, num_modes, width, height,
-                      fmt->width, fmt->height);
+    mode = sc910gs_find_mode(fmt->code, fmt->width, fmt->height);
 
     if (ctrl->id == V4L2_CID_VBLANK && sc910gs->exposure) {
         vmax = ctrl->val + mode->height;
@@ -433,7 +519,7 @@ static int sc910gs_set_ctrl(struct v4l2_ctrl *ctrl)
     }
 
     if (ctrl->id == V4L2_CID_VFLIP || ctrl->id == V4L2_CID_HFLIP)
-        fmt->code = sc910gs_get_format_code(sc910gs, fmt->code);
+        fmt->code = sc910gs_get_format_code(fmt->code);
 
     /* Apply control only when powered (runtime active). */
     pm_ret = pm_runtime_get_if_in_use(sc910gs->dev);
@@ -506,9 +592,9 @@ static int sc910gs_init_controls(struct sc910gs *sc910gs)
 {
     struct v4l2_ctrl_handler *hdl = &sc910gs->ctrl_handler;
     struct v4l2_fwnode_device_properties props;
-    const struct sc910gs_mode *mode = &supported_modes_12bit[0];
-    u32 vblank_def = SC910GS_VMAX_DEFAULT - mode->height;
-    u32 exposure_max = SC910GS_EXPOSURE_MAX(SC910GS_VMAX_DEFAULT);
+    const struct sc910gs_mode *mode = &supported_modes[0];
+    u32 vblank_def = mode->vmax_def - mode->height;
+    u32 exposure_max = SC910GS_EXPOSURE_MAX(mode->vmax_def);
     int ret;
 
     ret = v4l2_ctrl_handler_init(hdl, 18);
@@ -516,7 +602,8 @@ static int sc910gs_init_controls(struct sc910gs *sc910gs)
     /* Read-only */
     sc910gs->pixel_rate = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
                            V4L2_CID_PIXEL_RATE,
-                           SC910GS_PIXEL_RATE, SC910GS_PIXEL_RATE, 1, SC910GS_PIXEL_RATE);
+                           SC910GS_PIXEL_RATE, SC910GS_PIXEL_RATE,
+                           1, mode->pixel_rate);
     if (sc910gs->pixel_rate)
         sc910gs->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
@@ -527,7 +614,7 @@ static int sc910gs_init_controls(struct sc910gs *sc910gs)
         sc910gs->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
     sc910gs->vblank = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
-                       V4L2_CID_VBLANK, vblank_def,
+                       V4L2_CID_VBLANK, mode->vblank_min,
                        0xFFFF - mode->height, 1, vblank_def);
 
     sc910gs->hblank = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
@@ -596,12 +683,10 @@ static int sc910gs_enum_mbus_code(struct v4l2_subdev *sd,
                  struct v4l2_subdev_state *sd_state,
                  struct v4l2_subdev_mbus_code_enum *code)
 {
-    struct sc910gs *sc910gs = to_sc910gs(sd);
-
-    if (code->index)
+    if (code->index >= ARRAY_SIZE(sc910gs_mbus_codes))
         return -EINVAL;
 
-    code->code = sc910gs_get_format_code(sc910gs, code->code);
+    code->code = sc910gs_mbus_codes[code->index];
     return 0;
 }
 
@@ -609,22 +694,28 @@ static int sc910gs_enum_frame_size(struct v4l2_subdev *sd,
                   struct v4l2_subdev_state *sd_state,
                   struct v4l2_subdev_frame_size_enum *fse)
 {
-    struct sc910gs *sc910gs = to_sc910gs(sd);
-    const struct sc910gs_mode *mode_list;
-    unsigned int num_modes;
+    unsigned int i, index = 0;
 
-    get_mode_table(sc910gs, fse->code, &mode_list, &num_modes);
-    if (fse->index >= num_modes)
-        return -EINVAL;
-    if (fse->code != sc910gs_get_format_code(sc910gs, fse->code))
+    if (fse->code != sc910gs_get_format_code(fse->code))
         return -EINVAL;
 
-    fse->min_width  = mode_list[fse->index].width;
-    fse->max_width  = fse->min_width;
-    fse->min_height = mode_list[fse->index].height;
-    fse->max_height = fse->min_height;
+    for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+        const struct sc910gs_mode *mode = &supported_modes[i];
 
-    return 0;
+        if (mode->code != fse->code)
+            continue;
+
+        if (index++ != fse->index)
+            continue;
+
+        fse->min_width  = mode->width;
+        fse->max_width  = mode->width;
+        fse->min_height = mode->height;
+        fse->max_height = mode->height;
+        return 0;
+    }
+
+    return -EINVAL;
 }
 
 static int sc910gs_set_pad_format(struct v4l2_subdev *sd,
@@ -632,17 +723,15 @@ static int sc910gs_set_pad_format(struct v4l2_subdev *sd,
                  struct v4l2_subdev_format *fmt)
 {
     struct sc910gs *sc910gs = to_sc910gs(sd);
-    const struct sc910gs_mode *mode_list, *mode;
-    unsigned int num_modes;
+    const struct sc910gs_mode *mode;
     struct v4l2_mbus_framefmt *format;
     struct v4l2_rect *crop;
 
     /* Normalize requested code to what we really support */
-    fmt->format.code = sc910gs_get_format_code(sc910gs, fmt->format.code);
+    fmt->format.code = sc910gs_get_format_code(fmt->format.code);
 
-    get_mode_table(sc910gs, fmt->format.code, &mode_list, &num_modes);
-    mode = v4l2_find_nearest_size(mode_list, num_modes, width, height,
-                                  fmt->format.width, fmt->format.height);
+    mode = sc910gs_find_mode(fmt->format.code, fmt->format.width,
+                 fmt->format.height);
 
     fmt->format.width        = mode->width;
     fmt->format.height       = mode->height;
@@ -660,6 +749,9 @@ static int sc910gs_set_pad_format(struct v4l2_subdev *sd,
     crop = v4l2_subdev_state_get_crop(sd_state, 0);
     *crop = mode->crop;
 
+    if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+        sc910gs_update_ctrl_ranges(sc910gs, mode);
+
     return 0;
 }
 
@@ -675,9 +767,8 @@ static int sc910gs_enable_streams(struct v4l2_subdev *sd,
                  u64 streams_mask)
 {
     struct sc910gs *sc910gs = to_sc910gs(sd);
-    const struct sc910gs_mode *mode_list, *mode;
+    const struct sc910gs_mode *mode;
     struct v4l2_mbus_framefmt *fmt;
-    unsigned int n_modes;
     int ret = 0;
 
     if (pad || streams_mask != BIT_ULL(0))
@@ -687,9 +778,7 @@ static int sc910gs_enable_streams(struct v4l2_subdev *sd,
         return -EBUSY;
 
     fmt = v4l2_subdev_state_get_format(state, pad);
-    get_mode_table(sc910gs, fmt->code, &mode_list, &n_modes);
-    mode = v4l2_find_nearest_size(mode_list, n_modes, width, height,
-                      fmt->width, fmt->height);
+    mode = sc910gs_find_mode(fmt->code, fmt->width, fmt->height);
     if (!mode)
         return -EINVAL;
 
@@ -708,6 +797,15 @@ static int sc910gs_enable_streams(struct v4l2_subdev *sd,
     if (ret) {
         dev_err(sc910gs->dev, "Failed to write common settings\n");
         goto err_rpm_put;
+    }
+
+    if (mode->reg_list.num_of_regs) {
+        ret = cci_multi_reg_write(sc910gs->regmap, mode->reg_list.regs,
+                      mode->reg_list.num_of_regs, NULL);
+        if (ret) {
+            dev_err(sc910gs->dev, "Failed to write mode settings\n");
+            goto err_rpm_put;
+        }
     }
 
     usleep_range(50000, 51000);
@@ -855,7 +953,7 @@ static int sc910gs_get_selection(struct v4l2_subdev *sd,
         return 0;
 
     case V4L2_SEL_TGT_CROP_DEFAULT:
-        sel->r = supported_modes_12bit[0].crop;
+        sel->r = supported_modes[0].crop;
         return 0;
 
     case V4L2_SEL_TGT_CROP:
@@ -884,7 +982,7 @@ static int sc910gs_init_state(struct v4l2_subdev *sd,
     sc910gs_set_pad_format(sd, state, &fmt);
 
     crop = v4l2_subdev_state_get_crop(state, 0);
-    *crop = supported_modes_12bit[0].crop;
+    *crop = supported_modes[0].crop;
 
     return 0;
 }
