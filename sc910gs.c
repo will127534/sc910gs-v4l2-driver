@@ -351,16 +351,11 @@ static inline void get_mode_table(struct sc910gs *sc910gs, unsigned int code,
 
 static u32 sc910gs_get_format_code(struct sc910gs *sc910gs, u32 code)
 {
-    bool hflip = sc910gs->hflip ? sc910gs->hflip->val : false;
-    bool vflip = sc910gs->vflip ? sc910gs->vflip->val : false;
-
-    if (hflip && vflip)
-        return MEDIA_BUS_FMT_SRGGB12_1X12;
-    if (hflip)
-        return MEDIA_BUS_FMT_SGBRG12_1X12;
-    if (vflip)
-        return MEDIA_BUS_FMT_SGRBG12_1X12;
-
+    /*
+     * SC910GS mirror/flip changes readout direction, but the output Bayer
+     * phase remains the same. Reporting transformed Bayer orders makes the
+     * ISP demosaic single-axis flips with the wrong colour channels.
+     */
     return MEDIA_BUS_FMT_SBGGR12_1X12;
 }
 
@@ -551,13 +546,9 @@ static int sc910gs_init_controls(struct sc910gs *sc910gs)
 
     sc910gs->vflip = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
                       V4L2_CID_VFLIP, 0, 1, 1, 0);
-    if (sc910gs->vflip)
-        sc910gs->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 
     sc910gs->hflip = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
                       V4L2_CID_HFLIP, 0, 1, 1, 0);
-    if (sc910gs->hflip)
-        sc910gs->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 
     sc910gs->blacklevel = v4l2_ctrl_new_std(hdl, &sc910gs_ctrl_ops,
                            V4L2_CID_BRIGHTNESS, 0, 0x1000-1, 1,
